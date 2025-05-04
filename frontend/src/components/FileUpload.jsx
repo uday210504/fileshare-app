@@ -273,233 +273,239 @@ const FileUpload = () => {
 
       console.log(`Starting chunked upload with direct file reference: ${currentFile.name}`);
 
-    // Dynamically determine chunk size based on file size
-    // Smaller chunks for smaller files, larger chunks for larger files
-    let chunkSize = 5 * 1024 * 1024; // Default 5MB chunks
-    if (currentFile.size > 100 * 1024 * 1024) { // For files > 100MB
-      chunkSize = 10 * 1024 * 1024; // Use 10MB chunks
-    } else if (currentFile.size < 20 * 1024 * 1024) { // For files < 20MB
-      // For small files, use smaller chunks but ensure they're not too small
-      // Minimum chunk size of 1MB to prevent excessive requests
-      chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(currentFile.size / 4));
-    }
+      // Dynamically determine chunk size based on file size
+      // Smaller chunks for smaller files, larger chunks for larger files
+      let chunkSize = 5 * 1024 * 1024; // Default 5MB chunks
+      if (currentFile.size > 100 * 1024 * 1024) { // For files > 100MB
+        chunkSize = 10 * 1024 * 1024; // Use 10MB chunks
+      } else if (currentFile.size < 20 * 1024 * 1024) { // For files < 20MB
+        // For small files, use smaller chunks but ensure they're not too small
+        // Minimum chunk size of 1MB to prevent excessive requests
+        chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(currentFile.size / 4));
+      }
 
-    // Ensure chunk size is reasonable
-    chunkSize = Math.min(chunkSize, currentFile.size); // Don't make chunks larger than the file
+      // Ensure chunk size is reasonable
+      chunkSize = Math.min(chunkSize, currentFile.size); // Don't make chunks larger than the file
 
-    const chunks = Math.ceil(currentFile.size / chunkSize);
-    const uploadId = Date.now().toString() + '-' + Math.random().toString(36).substring(2, 10);
+      const chunks = Math.ceil(currentFile.size / chunkSize);
+      const uploadId = Date.now().toString() + '-' + Math.random().toString(36).substring(2, 10);
 
-    // Determine optimal number of concurrent uploads based on file size and network conditions
-    // More concurrent uploads for larger files, fewer for smaller files
-    let concurrentUploads = 3; // Default
-    if (currentFile.size > 100 * 1024 * 1024) {
-      concurrentUploads = 4; // More concurrent uploads for very large files
-    } else if (currentFile.size < 20 * 1024 * 1024) {
-      concurrentUploads = 2; // Fewer concurrent uploads for smaller files
-    }
+      // Determine optimal number of concurrent uploads based on file size and network conditions
+      // More concurrent uploads for larger files, fewer for smaller files
+      let concurrentUploads = 3; // Default
+      if (currentFile.size > 100 * 1024 * 1024) {
+        concurrentUploads = 4; // More concurrent uploads for very large files
+      } else if (currentFile.size < 20 * 1024 * 1024) {
+        concurrentUploads = 2; // Fewer concurrent uploads for smaller files
+      }
 
-    // Track uploaded chunks
-    const uploadedChunks = new Set();
-    const failedChunks = [];
+      // Track uploaded chunks
+      const uploadedChunks = new Set();
+      const failedChunks = [];
 
-    // Create abort controller for cancellation
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
+      // Create abort controller for cancellation
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
 
-    console.log(`Starting chunked upload for file: ${currentFile.name}, size: ${formatFileSize(currentFile.size)}, chunks: ${chunks}, concurrent uploads: ${concurrentUploads}, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
+      console.log(`Starting chunked upload for file: ${currentFile.name}, size: ${formatFileSize(currentFile.size)}, chunks: ${chunks}, concurrent uploads: ${concurrentUploads}, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
 
-    try {
-      // Step 1: Initialize the upload
-      await api.post('/api/upload/init', {
-        uploadId,
-        filename: currentFile.name,
-        totalChunks: chunks,
-        fileSize: currentFile.size,
-        mimeType: currentFile.type,
-        chunkSize // Send chunk size to server
-      }, { signal });
+      try {
+        // Step 1: Initialize the upload
+        await api.post('/api/upload/init', {
+          uploadId,
+          filename: currentFile.name,
+          totalChunks: chunks,
+          fileSize: currentFile.size,
+          mimeType: currentFile.type,
+          chunkSize // Send chunk size to server
+        }, { signal });
 
-      // Step 2: Upload chunks in parallel
-      const updateProgress = () => {
-        const progress = (uploadedChunks.size / chunks) * 100;
-        setUploadProgress(Math.min(Math.round(progress), 99)); // Cap at 99% until complete
-      };
+        // Step 2: Upload chunks in parallel
+        const updateProgress = () => {
+          const progress = (uploadedChunks.size / chunks) * 100;
+          setUploadProgress(Math.min(Math.round(progress), 99)); // Cap at 99% until complete
+        };
 
-      // Function to upload a single chunk
-      const uploadChunk = async (chunkIndex) => {
-        if (signal.aborted) return;
+        // Function to upload a single chunk
+        const uploadChunk = async (chunkIndex) => {
+          if (signal.aborted) return;
 
-        try {
-          setCurrentChunk(chunkIndex);
+          try {
+            setCurrentChunk(chunkIndex);
 
-          const start = chunkIndex * chunkSize;
-          const end = Math.min(currentFile.size, start + chunkSize);
-          const chunk = currentFile.slice(start, end);
+            const start = chunkIndex * chunkSize;
+            const end = Math.min(currentFile.size, start + chunkSize);
+            const chunk = currentFile.slice(start, end);
 
-          // Validate chunk
-          if (!chunk || chunk.size === 0) {
-            console.error(`Invalid chunk at index ${chunkIndex}: empty or zero size`);
-            failedChunks.push(chunkIndex);
+            // Validate chunk
+            if (!chunk || chunk.size === 0) {
+              console.error(`Invalid chunk at index ${chunkIndex}: empty or zero size`);
+              failedChunks.push(chunkIndex);
+              return false;
+            }
+
+            const formData = new FormData();
+            formData.append('chunk', chunk, 'chunk'); // Add a filename to help some browsers
+            formData.append('uploadId', uploadId);
+            formData.append('chunkIndex', chunkIndex);
+
+            // Add retry mechanism
+            let retries = 0;
+            const maxRetries = 2;
+
+            while (retries <= maxRetries) {
+              try {
+                // Important: Do NOT set Content-Type header for multipart/form-data
+                // Let the browser set it automatically with the correct boundary
+                await api.post('/api/upload/chunk', formData, {
+                  signal,
+                  // We'll handle progress separately for parallel uploads
+                  onUploadProgress: (progressEvent) => {
+                    // This progress is just for this chunk
+                    if (progressEvent.total) {
+                      const chunkProgress = progressEvent.loaded / progressEvent.total;
+                      // We don't update the overall progress here to avoid UI jitter
+                    }
+                  },
+                  // Shorter timeout for chunks
+                  timeout: 60000 // 1 minute timeout per chunk
+                });
+
+                // Success - break out of retry loop
+                break;
+              } catch (err) {
+                retries++;
+
+                // If this is the last retry, throw the error
+                if (retries > maxRetries || signal.aborted) {
+                  throw err;
+                }
+
+                // Otherwise wait and retry
+                console.warn(`Retrying chunk ${chunkIndex} (attempt ${retries}/${maxRetries})...`);
+                await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // Exponential backoff
+              }
+            }
+
+            uploadedChunks.add(chunkIndex);
+            updateProgress();
+
+            return true;
+          } catch (error) {
+            if (!signal.aborted) {
+              console.error(`Error uploading chunk ${chunkIndex}:`, error);
+              failedChunks.push(chunkIndex);
+            }
             return false;
           }
+        };
 
-          const formData = new FormData();
-          formData.append('chunk', chunk, 'chunk'); // Add a filename to help some browsers
-          formData.append('uploadId', uploadId);
-          formData.append('chunkIndex', chunkIndex);
-
-          // Add retry mechanism
-          let retries = 0;
-          const maxRetries = 2;
-
-          while (retries <= maxRetries) {
-            try {
-              // Important: Do NOT set Content-Type header for multipart/form-data
-              // Let the browser set it automatically with the correct boundary
-              await api.post('/api/upload/chunk', formData, {
-                signal,
-                // We'll handle progress separately for parallel uploads
-                onUploadProgress: (progressEvent) => {
-                  // This progress is just for this chunk
-                  if (progressEvent.total) {
-                    const chunkProgress = progressEvent.loaded / progressEvent.total;
-                    // We don't update the overall progress here to avoid UI jitter
-                  }
-                },
-                // Shorter timeout for chunks
-                timeout: 60000 // 1 minute timeout per chunk
-              });
-
-              // Success - break out of retry loop
-              break;
-            } catch (err) {
-              retries++;
-
-              // If this is the last retry, throw the error
-              if (retries > maxRetries || signal.aborted) {
-                throw err;
-              }
-
-              // Otherwise wait and retry
-              console.warn(`Retrying chunk ${chunkIndex} (attempt ${retries}/${maxRetries})...`);
-              await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // Exponential backoff
-            }
+        // Process chunks in batches
+        for (let batchStart = 0; batchStart < chunks; batchStart += concurrentUploads) {
+          if (signal.aborted) {
+            throw new Error('Upload cancelled');
           }
 
-          uploadedChunks.add(chunkIndex);
-          updateProgress();
+          const currentBatch = [];
+          const end = Math.min(batchStart + concurrentUploads, chunks);
 
-          return true;
-        } catch (error) {
-          if (!signal.aborted) {
-            console.error(`Error uploading chunk ${chunkIndex}:`, error);
-            failedChunks.push(chunkIndex);
+          for (let i = batchStart; i < end; i++) {
+            currentBatch.push(uploadChunk(i));
           }
-          return false;
-        }
-      };
 
-      // Process chunks in batches
-      for (let batchStart = 0; batchStart < chunks; batchStart += concurrentUploads) {
-        if (signal.aborted) {
-          throw new Error('Upload cancelled');
+          // Wait for all chunks in this batch to complete
+          await Promise.all(currentBatch);
         }
 
-        const currentBatch = [];
-        const end = Math.min(batchStart + concurrentUploads, chunks);
+        // Retry failed chunks (up to 3 retries)
+        if (failedChunks.length > 0 && !signal.aborted) {
+          const maxRetries = 3;
+          for (let retry = 0; retry < maxRetries && failedChunks.length > 0; retry++) {
+            const chunksToRetry = [...failedChunks];
+            failedChunks.length = 0; // Clear the array
 
-        for (let i = batchStart; i < end; i++) {
-          currentBatch.push(uploadChunk(i));
+            const retryPromises = chunksToRetry.map(chunkIndex => uploadChunk(chunkIndex));
+            await Promise.all(retryPromises);
+          }
         }
 
-        // Wait for all chunks in this batch to complete
-        await Promise.all(currentBatch);
-      }
-
-      // Retry failed chunks (up to 3 retries)
-      if (failedChunks.length > 0 && !signal.aborted) {
-        const maxRetries = 3;
-        for (let retry = 0; retry < maxRetries && failedChunks.length > 0; retry++) {
-          const chunksToRetry = [...failedChunks];
-          failedChunks.length = 0; // Clear the array
-
-          const retryPromises = chunksToRetry.map(chunkIndex => uploadChunk(chunkIndex));
-          await Promise.all(retryPromises);
+        // Check if all chunks were uploaded
+        if (uploadedChunks.size !== chunks) {
+          throw new Error(`Failed to upload all chunks. ${chunks - uploadedChunks.size} chunks missing.`);
         }
-      }
 
-      // Check if all chunks were uploaded
-      if (uploadedChunks.size !== chunks) {
-        throw new Error(`Failed to upload all chunks. ${chunks - uploadedChunks.size} chunks missing.`);
-      }
+        // Step 3: Complete the upload
+        const response = await api.post('/api/upload/complete', {
+          uploadId,
+          compress: compressFiles // Send compression flag to server
+        }, { signal });
 
-      // Step 3: Complete the upload
-      const response = await api.post('/api/upload/complete', {
-        uploadId,
-        compress: compressFiles // Send compression flag to server
-      }, { signal });
+        setUploadProgress(100);
 
-      setUploadProgress(100);
+        // Check if the response is valid
+        if (!response || !response.data) {
+          throw new Error('Invalid response from server');
+        }
 
-      // Check if the response is valid
-      if (!response || !response.data) {
-        throw new Error('Invalid response from server');
-      }
+        console.log(`Chunked upload successful for ${currentFile.name}:`, response.data);
 
-      console.log(`Chunked upload successful for ${currentFile.name}:`, response.data);
+        // Add to results array - use a callback to ensure we're working with the latest state
+        setUploadResults(prev => {
+          const newResults = [...prev, response.data];
+          console.log(`Updated upload results: ${newResults.length} files`);
+          return newResults;
+        });
 
-      // Add to results array - use a callback to ensure we're working with the latest state
-      setUploadResults(prev => {
-        const newResults = [...prev, response.data];
-        console.log(`Updated upload results: ${newResults.length} files`);
-        return newResults;
-      });
+        // Update progress to 100% for this file
+        setUploadProgress(100);
 
-      // Update progress to 100% for this file
-      setUploadProgress(100);
+        // Return the response data to indicate success
+        return response.data;
+      } catch (err) {
+        if (signal.aborted || err.message === 'Upload cancelled') {
+          setError('Upload was cancelled');
+          return null;
+        }
 
-      // Return the response data to indicate success
-      return response.data;
-    } catch (err) {
-      if (signal.aborted || err.message === 'Upload cancelled') {
-        setError('Upload was cancelled');
+        // Get the current file for error reporting
+        const currentFile = files[currentFileIndex];
+        const fileName = currentFile ? currentFile.name : `file at index ${currentFileIndex}`;
+        const fileSize = currentFile ? formatFileSize(currentFile.size) : 'unknown size';
+
+        console.error(`Chunked upload error for ${fileName}:`, err);
+
+        // More detailed error message
+        let errorMessage = 'Failed to upload file. Please try again.';
+
+        if (err.message) {
+          errorMessage = err.message;
+        } else if (err.response?.data?.error) {
+          errorMessage = err.response.data.error;
+        }
+
+        // Add file info to error for better debugging
+        console.error(`Error uploading file: ${fileName}, size: ${fileSize}`);
+
+        // If we have failed chunks, add that info
+        if (failedChunks && failedChunks.length > 0) {
+          console.error(`Failed chunks: ${failedChunks.length} out of ${chunks}`);
+          if (failedChunks.length < chunks / 2) {
+            errorMessage += ' Some chunks failed to upload. Try again or use a smaller file.';
+          } else {
+            errorMessage += ' Most chunks failed to upload. Check your connection and try again.';
+          }
+        }
+
+        // Set the error message but don't clear it immediately
+        setError(errorMessage);
+
+        // Return null to indicate failure
         return null;
       }
-
-      // Get the current file for error reporting
-      const currentFile = files[currentFileIndex];
-      const fileName = currentFile ? currentFile.name : `file at index ${currentFileIndex}`;
-      const fileSize = currentFile ? formatFileSize(currentFile.size) : 'unknown size';
-
-      console.error(`Chunked upload error for ${fileName}:`, err);
-
-      // More detailed error message
-      let errorMessage = 'Failed to upload file. Please try again.';
-
-      if (err.message) {
-        errorMessage = err.message;
-      } else if (err.response?.data?.error) {
-        errorMessage = err.response.data.error;
-      }
-
-      // Add file info to error for better debugging
-      console.error(`Error uploading file: ${fileName}, size: ${fileSize}`);
-
-      // If we have failed chunks, add that info
-      if (failedChunks && failedChunks.length > 0) {
-        console.error(`Failed chunks: ${failedChunks.length} out of ${chunks}`);
-        if (failedChunks.length < chunks / 2) {
-          errorMessage += ' Some chunks failed to upload. Try again or use a smaller file.';
-        } else {
-          errorMessage += ' Most chunks failed to upload. Check your connection and try again.';
-        }
-      }
-
-      // Set the error message but don't clear it immediately
-      setError(errorMessage);
-
-      // Return null to indicate failure
+    } catch (err) {
+      // Handle the outer try-catch block
+      console.error('Error in chunked upload:', err);
+      setError('An unexpected error occurred during upload. Please try again.');
       return null;
     }
   }
