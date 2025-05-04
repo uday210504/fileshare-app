@@ -6,52 +6,14 @@ import './FileUpload.css';
 // Helper function to create a file group
 const createFileGroup = async (fileIds, groupName) => {
   try {
-    console.log('Creating file group with IDs:', fileIds, 'and name:', groupName || 'default');
-
-    // Validate input
-    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
-      throw new Error('No valid file IDs provided for group creation');
-    }
-
-    // Add retry mechanism for network issues
-    let retries = 0;
-    const maxRetries = 2;
-
-    while (retries <= maxRetries) {
-      try {
-        const response = await api.post('/api/group', {
-          fileIds,
-          groupName
-        }, {
-          // Shorter timeout for this request
-          timeout: 30000,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
-
-        console.log('Group creation successful:', response.data);
-        return response.data;
-      } catch (err) {
-        retries++;
-
-        // If this is the last retry, throw the error
-        if (retries > maxRetries) {
-          throw err;
-        }
-
-        // Otherwise wait and retry
-        console.warn(`Retrying group creation (attempt ${retries}/${maxRetries})...`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // Exponential backoff
-      }
-    }
+    const response = await api.post('/api/group', {
+      fileIds,
+      groupName
+    });
+    return response.data;
   } catch (error) {
     console.error('Error creating file group:', error);
-    if (error.message && error.message.includes('Network Error')) {
-      throw new Error('Network error while creating group. Your files were uploaded but couldn\'t be grouped. You can still use individual file codes.');
-    } else {
-      throw error;
-    }
+    throw error;
   }
 };
 
@@ -669,24 +631,14 @@ const FileUpload = () => {
                         console.log(`All ${files.length} files processed successfully`);
 
                         // If we want to create a group
-                        if (createGroup && files.length > 1 && uploadResults.length > 1) {
+                        if (createGroup && files.length > 1) {
                           console.log('Creating file group...');
 
-                          // Get all file IDs from the upload results
-                          const fileIds = uploadResults.map(result => result.code);
-
-                          // Validate that we have file IDs
-                          if (!fileIds || fileIds.length === 0) {
-                            console.error('No file IDs available for group creation');
-                            setError('Files were uploaded but no valid file IDs were found for group creation.');
-                            return;
-                          }
-
                           try {
-                            // Add a small delay to ensure all uploads are fully processed
-                            await new Promise(resolve => setTimeout(resolve, 500));
+                            // Get all file IDs from the upload results
+                            const fileIds = uploadResults.map(result => result.code);
 
-                            // Create the group with retry mechanism built into the function
+                            // Create the group
                             const groupResult = await createFileGroup(fileIds, groupName || undefined);
                             console.log('Group created:', groupResult);
 
@@ -694,7 +646,7 @@ const FileUpload = () => {
                             setGroupInfo(groupResult);
                           } catch (error) {
                             console.error('Failed to create group:', error);
-                            setError(error.message || 'Files were uploaded but failed to create group. You can still use individual file codes.');
+                            setError('Files were uploaded but failed to create group. You can still use individual file codes.');
                           }
                         }
 
@@ -740,26 +692,14 @@ const FileUpload = () => {
                       console.log(`All ${files.length} files processed successfully`);
 
                       // If we want to create a group
-                      if (createGroup && files.length > 1 && uploadResults.length > 1) {
+                      if (createGroup && files.length > 1) {
                         console.log('Creating file group...');
 
-                        // Get all file IDs from the upload results
-                        const fileIds = uploadResults.map(result => result.code);
-
-                        // Validate that we have file IDs
-                        if (!fileIds || fileIds.length === 0) {
-                          console.error('No file IDs available for group creation');
-                          setError('Files were uploaded but no valid file IDs were found for group creation.');
-                          setUploading(false);
-                          setOverallProgress(100);
-                          return;
-                        }
-
                         try {
-                          // Add a small delay to ensure all uploads are fully processed
-                          await new Promise(resolve => setTimeout(resolve, 500));
+                          // Get all file IDs from the upload results
+                          const fileIds = uploadResults.map(result => result.code);
 
-                          // Create the group with retry mechanism built into the function
+                          // Create the group
                           const groupResult = await createFileGroup(fileIds, groupName || undefined);
                           console.log('Group created:', groupResult);
 
@@ -767,7 +707,7 @@ const FileUpload = () => {
                           setGroupInfo(groupResult);
                         } catch (error) {
                           console.error('Failed to create group:', error);
-                          setError(error.message || 'Files were uploaded but failed to create group. You can still use individual file codes.');
+                          setError('Files were uploaded but failed to create group. You can still use individual file codes.');
                         }
                       }
 
@@ -960,26 +900,14 @@ const FileUpload = () => {
             processingRef.current = false;
 
             // If this is the last file and we want to create a group
-            if (currentFileIndex + 1 >= validFiles.length && createGroup && uploadResults.length > 1) {
+            if (currentFileIndex + 1 >= validFiles.length && createGroup) {
               // We've processed all files, now create a group
               console.log('All files uploaded, creating group...');
 
               // Get all file IDs from the upload results
               const fileIds = uploadResults.map(result => result.code);
 
-              // Validate that we have file IDs
-              if (!fileIds || fileIds.length === 0) {
-                console.error('No file IDs available for group creation');
-                setError('Files were uploaded but no valid file IDs were found for group creation.');
-                setOverallProgress(100);
-                setUploading(false);
-                return;
-              }
-
               try {
-                // Add a small delay to ensure all uploads are fully processed
-                await new Promise(resolve => setTimeout(resolve, 500));
-
                 // Create the group
                 const groupResult = await createFileGroup(fileIds, groupName || undefined);
                 console.log('Group created:', groupResult);
@@ -992,7 +920,7 @@ const FileUpload = () => {
                 setUploading(false);
               } catch (error) {
                 console.error('Failed to create group:', error);
-                setError(error.message || 'Files were uploaded but failed to create group. You can still use individual file codes.');
+                setError('Files were uploaded but failed to create group. You can still use individual file codes.');
                 setOverallProgress(100);
                 setUploading(false);
               }
