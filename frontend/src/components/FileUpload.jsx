@@ -28,13 +28,30 @@ const FileUpload = () => {
       // Reset any previous errors
       setError(null);
 
+      // Filter out duplicate files by name
+      const uniqueFiles = [];
+      const fileNames = new Set();
+
+      for (const file of acceptedFiles) {
+        if (!fileNames.has(file.name)) {
+          fileNames.add(file.name);
+          uniqueFiles.push(file);
+        }
+      }
+
       // Store all dropped files
-      setFiles(acceptedFiles);
+      setFiles(uniqueFiles);
       setCurrentFileIndex(0);
       setUploadResults([]);
 
+      // Log the files being processed
+      console.log(`Dropped ${uniqueFiles.length} unique files:`);
+      uniqueFiles.forEach((file, index) => {
+        console.log(`File ${index + 1}: ${file.name}, size: ${formatFileSize(file.size)}`);
+      });
+
       // Analyze the first file to determine upload method
-      const firstFile = acceptedFiles[0];
+      const firstFile = uniqueFiles[0];
 
       // Use regular upload for very small files, chunked upload for larger files
       // This ensures small files upload successfully
@@ -56,8 +73,6 @@ const FileUpload = () => {
         setTotalChunks(chunks);
         setCurrentChunk(0);
       }
-
-      console.log(`Dropped ${acceptedFiles.length} files. First file: ${firstFile.name}, size: ${firstFile.size} bytes`);
     }
   }, []);
 
@@ -407,6 +422,18 @@ const FileUpload = () => {
 
         // Determine upload method for the next file
         const nextFile = files[nextIndex];
+
+        // Log which file we're processing now
+        console.log(`Processing next file (${nextIndex + 1}/${files.length}): ${nextFile.name}, size: ${formatFileSize(nextFile.size)}`);
+
+        // Validate the file
+        if (!nextFile || nextFile.size === 0) {
+          console.error(`Invalid file at index ${nextIndex}`);
+          // Skip this file and move to the next one
+          processNextFile();
+          return;
+        }
+
         const useChunks = nextFile.size > 2 * 1024 * 1024;
         setUseChunkedUpload(useChunks);
 
@@ -423,21 +450,25 @@ const FileUpload = () => {
           setCurrentChunk(0);
         }
 
+        // Create a new abort controller for this file
+        abortControllerRef.current = new AbortController();
+
         // Start uploading the next file
         // We're using a new promise here to avoid recursive await calls
         const uploadPromise = useChunks ? handleChunkedUpload() : handleRegularUpload();
 
         uploadPromise.catch(err => {
-          console.error(`Error uploading file ${nextIndex}:`, err);
+          console.error(`Error uploading file ${nextIndex} (${nextFile.name}):`, err);
           // Continue with next file despite error
           processNextFile();
         });
       } else {
         // All files processed
+        console.log(`All ${files.length} files processed successfully`);
         setUploading(false);
         setOverallProgress(100);
       }
-    }, 100); // Small delay to prevent UI freezing
+    }, 500); // Increased delay to ensure proper state updates between files
   };
 
   // Main upload handler
@@ -447,6 +478,7 @@ const FileUpload = () => {
       return;
     }
 
+    // Reset all state
     setUploading(true);
     setUploadProgress(0);
     setOverallProgress(0);
@@ -454,9 +486,29 @@ const FileUpload = () => {
     setUploadResults([]);
     setCurrentFileIndex(0);
 
+    // Log the upload process
+    console.log(`Starting upload of ${files.length} files:`);
+    files.forEach((file, index) => {
+      console.log(`File ${index + 1}: ${file.name}, size: ${formatFileSize(file.size)}`);
+    });
+
+    // Validate the first file
+    const firstFile = files[0];
+    if (!firstFile || firstFile.size === 0) {
+      setError('Invalid file. Please select valid files.');
+      setUploading(false);
+      return;
+    }
+
+    // Create a new abort controller for this upload session
+    abortControllerRef.current = new AbortController();
+
     try {
       // Start with the first file
-      if (useChunkedUpload) {
+      const useChunksForFirstFile = firstFile.size > 2 * 1024 * 1024;
+      setUseChunkedUpload(useChunksForFirstFile);
+
+      if (useChunksForFirstFile) {
         await handleChunkedUpload();
       } else {
         await handleRegularUpload();
@@ -673,19 +725,31 @@ const FileUpload = () => {
             <>
               <h2>Files Uploaded Successfully!</h2>
               <p><strong>{uploadResults.length} files</strong> have been uploaded.</p>
+
+              {/* Check for duplicate filenames and add index if needed */}
               <div className="files-codes-list">
-                {uploadResults.map((result, index) => (
-                  <div key={index} className="file-code-item">
-                    <div className="file-code-name">{result.filename}</div>
-                    <div className="file-code-value">{result.code}</div>
-                    <button className="copy-code-button" onClick={() => {
-                      navigator.clipboard.writeText(result.code);
-                      alert(`Code for ${result.filename} copied to clipboard!`);
-                    }}>
-                      Copy
-                    </button>
-                  </div>
-                ))}
+                {uploadResults.map((result, index) => {
+                  // Check if this filename appears multiple times
+                  const isDuplicate = uploadResults.filter(r => r.filename === result.filename).length > 1;
+
+                  // If duplicate, add the index to make it clear which is which
+                  const displayName = isDuplicate
+                    ? `${result.filename} (${index + 1})`
+                    : result.filename;
+
+                  return (
+                    <div key={index} className="file-code-item">
+                      <div className="file-code-name">{displayName}</div>
+                      <div className="file-code-value">{result.code}</div>
+                      <button className="copy-code-button" onClick={() => {
+                        navigator.clipboard.writeText(result.code);
+                        alert(`Code for ${displayName} copied to clipboard!`);
+                      }}>
+                        Copy
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
               <div className="success-actions">
                 <button className="new-upload-button" onClick={handleReset}>
