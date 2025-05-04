@@ -94,6 +94,31 @@
   margin-bottom: 1.5rem;
 }
 
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.chunk-info {
+  font-size: 0.9rem;
+  color: #aaa;
+}
+
+.cancel-button {
+  background-color: var(--danger-color);
+  padding: 0.3rem 0.8rem;
+  font-size: 0.9rem;
+}
+
+.upload-method {
+  font-size: 0.85rem;
+  color: var(--primary-color);
+  margin-top: 0.5rem;
+  font-style: italic;
+}
+
 .error-message {
   color: var(--danger-color);
   background-color: rgba(239, 71, 111, 0.1);
@@ -144,19 +169,19 @@
     background-color: rgba(0, 0, 0, 0.03);
     border-color: #ccc;
   }
-  
+
   .dropzone:hover {
     background-color: rgba(0, 0, 0, 0.05);
   }
-  
+
   .dropzone.active {
     background-color: rgba(67, 97, 238, 0.1);
   }
-  
+
   .dropzone.has-file {
     background-color: rgba(6, 214, 160, 0.1);
   }
-  
+
   .error-message {
     background-color: rgba(239, 71, 111, 0.1);
   }
