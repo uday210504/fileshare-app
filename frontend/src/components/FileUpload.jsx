@@ -87,11 +87,18 @@ const FileUpload = () => {
 
   // Optimized regular upload for smaller files
   const handleRegularUpload = async () => {
+    // Validate file before uploading
+    if (!file || file.size === 0) {
+      setError('Invalid file. Please select a valid file.');
+      setUploading(false);
+      return;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
 
     // Add optimization hints to the request
-    formData.append('optimized', 'true');
+    formData.append('optimized', compressFiles ? 'true' : 'false');
 
     // Add file size info to help server optimize handling
     formData.append('fileSize', file.size.toString());
@@ -101,19 +108,21 @@ const FileUpload = () => {
       abortControllerRef.current = new AbortController();
       const signal = abortControllerRef.current.signal;
 
-      console.log(`Starting regular upload for file: ${file.name}, size: ${file.size} bytes`);
+      console.log(`Starting regular upload for file: ${file.name}, size: ${file.size} bytes, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
 
       // Important: Do NOT set Content-Type header for multipart/form-data
       // Let the browser set it automatically with the correct boundary
       const response = await api.post('/api/upload', formData, {
-        headers: {
-          'X-Requested-With': 'XMLHttpRequest', // Add this header for better server handling
-          'Cache-Control': 'no-cache', // Prevent caching
-        },
+        // No Content-Type header - handled by request interceptor
         signal,
         onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setUploadProgress(percentCompleted);
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percentCompleted);
+          } else {
+            // For browsers that don't provide progress.total
+            setUploadProgress(50); // Show some progress
+          }
         },
         // Add timeout to prevent hanging uploads
         timeout: 5 * 60 * 1000, // 5 minutes timeout
@@ -135,9 +144,19 @@ const FileUpload = () => {
         setError('Upload was cancelled');
       } else {
         console.error('Upload error:', err);
+
         // More detailed error message
-        const errorMessage = err.response?.data?.error ||
-                            (err.message || 'Failed to upload file. Please try again.');
+        let errorMessage = 'Failed to upload file. Please try again.';
+
+        if (err.message) {
+          errorMessage = err.message;
+        } else if (err.response?.data?.error) {
+          errorMessage = err.response.data.error;
+        }
+
+        // Add file info to error for better debugging
+        console.error(`Error uploading file: ${file.name}, size: ${formatFileSize(file.size)}`);
+
         setError(errorMessage);
       }
       setUploading(false);
@@ -146,23 +165,35 @@ const FileUpload = () => {
 
   // Chunked upload for larger files with parallel uploads
   const handleChunkedUpload = async () => {
+    // Validate file before uploading
+    if (!file || file.size === 0) {
+      setError('Invalid file. Please select a valid file.');
+      setUploading(false);
+      return;
+    }
+
     // Dynamically determine chunk size based on file size
     // Smaller chunks for smaller files, larger chunks for larger files
     let chunkSize = 5 * 1024 * 1024; // Default 5MB chunks
     if (file.size > 100 * 1024 * 1024) { // For files > 100MB
       chunkSize = 10 * 1024 * 1024; // Use 10MB chunks
     } else if (file.size < 20 * 1024 * 1024) { // For files < 20MB
-      chunkSize = 2 * 1024 * 1024; // Use 2MB chunks
+      // For small files, use smaller chunks but ensure they're not too small
+      // Minimum chunk size of 1MB to prevent excessive requests
+      chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(file.size / 4));
     }
 
-    const chunks = Math.ceil(file.size / chunkSize);
-    const uploadId = Date.now().toString();
+    // Ensure chunk size is reasonable
+    chunkSize = Math.min(chunkSize, file.size); // Don't make chunks larger than the file
 
-    // Determine optimal number of concurrent uploads based on file size
+    const chunks = Math.ceil(file.size / chunkSize);
+    const uploadId = Date.now().toString() + '-' + Math.random().toString(36).substring(2, 10);
+
+    // Determine optimal number of concurrent uploads based on file size and network conditions
     // More concurrent uploads for larger files, fewer for smaller files
     let concurrentUploads = 3; // Default
     if (file.size > 100 * 1024 * 1024) {
-      concurrentUploads = 5; // More concurrent uploads for very large files
+      concurrentUploads = 4; // More concurrent uploads for very large files
     } else if (file.size < 20 * 1024 * 1024) {
       concurrentUploads = 2; // Fewer concurrent uploads for smaller files
     }
@@ -174,6 +205,8 @@ const FileUpload = () => {
     // Create abort controller for cancellation
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
+
+    console.log(`Starting chunked upload for file: ${file.name}, size: ${formatFileSize(file.size)}, chunks: ${chunks}, concurrent uploads: ${concurrentUploads}, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
 
     try {
       // Step 1: Initialize the upload
@@ -203,22 +236,55 @@ const FileUpload = () => {
           const end = Math.min(file.size, start + chunkSize);
           const chunk = file.slice(start, end);
 
+          // Validate chunk
+          if (!chunk || chunk.size === 0) {
+            console.error(`Invalid chunk at index ${chunkIndex}: empty or zero size`);
+            failedChunks.push(chunkIndex);
+            return false;
+          }
+
           const formData = new FormData();
-          formData.append('chunk', chunk);
+          formData.append('chunk', chunk, 'chunk'); // Add a filename to help some browsers
           formData.append('uploadId', uploadId);
           formData.append('chunkIndex', chunkIndex);
 
-          // Important: Do NOT set Content-Type header for multipart/form-data
-          // Let the browser set it automatically with the correct boundary
-          await api.post('/api/upload/chunk', formData, {
-            signal,
-            // We'll handle progress separately for parallel uploads
-            onUploadProgress: (progressEvent) => {
-              // This progress is just for this chunk
-              const chunkProgress = progressEvent.loaded / progressEvent.total;
-              // We don't update the overall progress here to avoid UI jitter
+          // Add retry mechanism
+          let retries = 0;
+          const maxRetries = 2;
+
+          while (retries <= maxRetries) {
+            try {
+              // Important: Do NOT set Content-Type header for multipart/form-data
+              // Let the browser set it automatically with the correct boundary
+              await api.post('/api/upload/chunk', formData, {
+                signal,
+                // We'll handle progress separately for parallel uploads
+                onUploadProgress: (progressEvent) => {
+                  // This progress is just for this chunk
+                  if (progressEvent.total) {
+                    const chunkProgress = progressEvent.loaded / progressEvent.total;
+                    // We don't update the overall progress here to avoid UI jitter
+                  }
+                },
+                // Shorter timeout for chunks
+                timeout: 60000 // 1 minute timeout per chunk
+              });
+
+              // Success - break out of retry loop
+              break;
+            } catch (err) {
+              retries++;
+
+              // If this is the last retry, throw the error
+              if (retries > maxRetries || signal.aborted) {
+                throw err;
+              }
+
+              // Otherwise wait and retry
+              console.warn(`Retrying chunk ${chunkIndex} (attempt ${retries}/${maxRetries})...`);
+              await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // Exponential backoff
             }
-          });
+          }
 
           uploadedChunks.add(chunkIndex);
           updateProgress();
@@ -289,7 +355,30 @@ const FileUpload = () => {
         setError('Upload was cancelled');
       } else {
         console.error('Chunked upload error:', err);
-        setError(err.response?.data?.error || 'Failed to upload file. Please try again.');
+
+        // More detailed error message
+        let errorMessage = 'Failed to upload file. Please try again.';
+
+        if (err.message) {
+          errorMessage = err.message;
+        } else if (err.response?.data?.error) {
+          errorMessage = err.response.data.error;
+        }
+
+        // Add file info to error for better debugging
+        console.error(`Error uploading file: ${file.name}, size: ${formatFileSize(file.size)}`);
+
+        // If we have failed chunks, add that info
+        if (failedChunks.length > 0) {
+          console.error(`Failed chunks: ${failedChunks.length} out of ${chunks}`);
+          if (failedChunks.length < chunks / 2) {
+            errorMessage += ' Some chunks failed to upload. Try again or use a smaller file.';
+          } else {
+            errorMessage += ' Most chunks failed to upload. Check your connection and try again.';
+          }
+        }
+
+        setError(errorMessage);
       }
       setUploading(false);
     }
