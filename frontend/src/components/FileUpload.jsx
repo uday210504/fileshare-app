@@ -1,50 +1,81 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import api from '../utils/api';
 import './FileUpload.css';
 
 const FileUpload = () => {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadResult, setUploadResult] = useState(null);
+  const [uploadResults, setUploadResults] = useState([]);
   const [error, setError] = useState(null);
   const [useChunkedUpload, setUseChunkedUpload] = useState(false);
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunks] = useState(0);
+  const [multipleFilesMode, setMultipleFilesMode] = useState(true);
+  const [compressFiles, setCompressFiles] = useState(false);
   const abortControllerRef = useRef(null);
+
+  // Current file being processed
+  const file = files[currentFileIndex] || null;
+
+  // Overall progress across all files
+  const [overallProgress, setOverallProgress] = useState(0);
 
   const onDrop = useCallback((acceptedFiles) => {
     if (acceptedFiles.length > 0) {
-      const selectedFile = acceptedFiles[0];
-      setFile(selectedFile);
+      // Reset any previous errors
       setError(null);
 
-      // Automatically use chunked upload for files larger than 5MB
-      // Lowered threshold to use optimized upload for more files
-      const useChunks = selectedFile.size > 5 * 1024 * 1024;
+      // Store all dropped files
+      setFiles(acceptedFiles);
+      setCurrentFileIndex(0);
+      setUploadResults([]);
+
+      // Analyze the first file to determine upload method
+      const firstFile = acceptedFiles[0];
+
+      // Use regular upload for very small files, chunked upload for larger files
+      // This ensures small files upload successfully
+      const useChunks = firstFile.size > 2 * 1024 * 1024; // Only use chunks for files > 2MB
       setUseChunkedUpload(useChunks);
 
       if (useChunks) {
         // Dynamically determine chunk size based on file size
         let chunkSize = 5 * 1024 * 1024; // Default 5MB chunks
-        if (selectedFile.size > 100 * 1024 * 1024) { // For files > 100MB
+        if (firstFile.size > 100 * 1024 * 1024) { // For files > 100MB
           chunkSize = 10 * 1024 * 1024; // Use 10MB chunks
-        } else if (selectedFile.size < 20 * 1024 * 1024) { // For files < 20MB
-          chunkSize = 2 * 1024 * 1024; // Use 2MB chunks
+        } else if (firstFile.size < 20 * 1024 * 1024) { // For files < 20MB
+          // For small files, use smaller chunks but ensure they're not too small
+          // Minimum chunk size of 1MB to prevent excessive requests
+          chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(firstFile.size / 4));
         }
 
-        const chunks = Math.ceil(selectedFile.size / chunkSize);
+        const chunks = Math.ceil(firstFile.size / chunkSize);
         setTotalChunks(chunks);
         setCurrentChunk(0);
       }
+
+      console.log(`Dropped ${acceptedFiles.length} files. First file: ${firstFile.name}, size: ${firstFile.size} bytes`);
     }
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    multiple: false
+    multiple: multipleFilesMode // Use the state to control multiple file mode
   });
+
+  // Effect to update overall progress when processing multiple files
+  useEffect(() => {
+    if (files.length > 0) {
+      // Calculate overall progress across all files
+      const filesCompleted = uploadResults.length;
+      const currentFileContribution = files.length > filesCompleted ? (uploadProgress / 100) / files.length : 0;
+      const newOverallProgress = ((filesCompleted / files.length) + currentFileContribution) * 100;
+      setOverallProgress(Math.min(Math.round(newOverallProgress), 99)); // Cap at 99% until all complete
+    }
+  }, [files.length, uploadResults.length, uploadProgress]);
 
   const formatFileSize = (bytes) => {
     if (bytes === 0) return '0 Bytes';
@@ -62,10 +93,15 @@ const FileUpload = () => {
     // Add optimization hints to the request
     formData.append('optimized', 'true');
 
+    // Add file size info to help server optimize handling
+    formData.append('fileSize', file.size.toString());
+
     try {
       // Create abort controller for cancellation
       abortControllerRef.current = new AbortController();
       const signal = abortControllerRef.current.signal;
+
+      console.log(`Starting regular upload for file: ${file.name}, size: ${file.size} bytes`);
 
       const response = await api.post('/api/upload', formData, {
         headers: {
@@ -82,13 +118,26 @@ const FileUpload = () => {
         timeout: 5 * 60 * 1000, // 5 minutes timeout
       });
 
-      setUploadResult(response.data);
+      console.log('Upload successful:', response.data);
+
+      // Add to results array
+      setUploadResults(prev => [...prev, response.data]);
+
+      // Process next file if in multiple files mode
+      if (multipleFilesMode) {
+        processNextFile();
+      } else {
+        setUploading(false);
+      }
     } catch (err) {
       if (abortControllerRef.current?.signal.aborted) {
         setError('Upload was cancelled');
       } else {
         console.error('Upload error:', err);
-        setError(err.response?.data?.error || 'Failed to upload file. Please try again.');
+        // More detailed error message
+        const errorMessage = err.response?.data?.error ||
+                            (err.message || 'Failed to upload file. Please try again.');
+        setError(errorMessage);
       }
       setUploading(false);
     }
@@ -219,9 +268,22 @@ const FileUpload = () => {
       }
 
       // Step 3: Complete the upload
-      const response = await api.post('/api/upload/complete', { uploadId }, { signal });
+      const response = await api.post('/api/upload/complete', {
+        uploadId,
+        compress: compressFiles // Send compression flag to server
+      }, { signal });
+
       setUploadProgress(100);
-      setUploadResult(response.data);
+
+      // Add to results array
+      setUploadResults(prev => [...prev, response.data]);
+
+      // Process next file if in multiple files mode
+      if (multipleFilesMode) {
+        processNextFile();
+      } else {
+        setUploading(false);
+      }
     } catch (err) {
       if (signal.aborted || err.message === 'Upload cancelled') {
         setError('Upload was cancelled');
@@ -241,19 +303,69 @@ const FileUpload = () => {
     }
   };
 
+  // Process the next file in the queue
+  const processNextFile = async () => {
+    // Move to the next file
+    const nextIndex = currentFileIndex + 1;
+
+    if (nextIndex < files.length) {
+      // More files to process
+      setCurrentFileIndex(nextIndex);
+      setUploadProgress(0);
+
+      // Determine upload method for the next file
+      const nextFile = files[nextIndex];
+      const useChunks = nextFile.size > 2 * 1024 * 1024;
+      setUseChunkedUpload(useChunks);
+
+      if (useChunks) {
+        let chunkSize = 5 * 1024 * 1024;
+        if (nextFile.size > 100 * 1024 * 1024) {
+          chunkSize = 10 * 1024 * 1024;
+        } else if (nextFile.size < 20 * 1024 * 1024) {
+          chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(nextFile.size / 4));
+        }
+
+        const chunks = Math.ceil(nextFile.size / chunkSize);
+        setTotalChunks(chunks);
+        setCurrentChunk(0);
+      }
+
+      // Start uploading the next file
+      try {
+        if (useChunks) {
+          await handleChunkedUpload();
+        } else {
+          await handleRegularUpload();
+        }
+      } catch (err) {
+        console.error(`Error uploading file ${nextIndex}:`, err);
+        // Continue with next file despite error
+        processNextFile();
+      }
+    } else {
+      // All files processed
+      setUploading(false);
+      setOverallProgress(100);
+    }
+  };
+
   // Main upload handler
   const handleUpload = async () => {
-    if (!file) {
-      setError('Please select a file first');
+    if (files.length === 0) {
+      setError('Please select at least one file first');
       return;
     }
 
     setUploading(true);
     setUploadProgress(0);
+    setOverallProgress(0);
     setError(null);
-    setUploadResult(null);
+    setUploadResults([]);
+    setCurrentFileIndex(0);
 
     try {
+      // Start with the first file
       if (useChunkedUpload) {
         await handleChunkedUpload();
       } else {
@@ -262,7 +374,6 @@ const FileUpload = () => {
     } catch (err) {
       console.error('Upload error:', err);
       setError('An unexpected error occurred. Please try again.');
-    } finally {
       setUploading(false);
     }
   };
@@ -273,53 +384,112 @@ const FileUpload = () => {
       handleCancelUpload();
     }
 
-    setFile(null);
-    setUploadResult(null);
+    setFiles([]);
+    setUploadResults([]);
     setError(null);
     setUploadProgress(0);
+    setOverallProgress(0);
     setUseChunkedUpload(false);
     setCurrentChunk(0);
     setTotalChunks(0);
+    setCurrentFileIndex(0);
   };
 
   return (
     <div className="file-upload">
-      {!uploadResult ? (
+      {uploadResults.length === 0 ? (
         <>
+          <div className="upload-options">
+            <div className="option-toggle">
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={multipleFilesMode}
+                  onChange={() => setMultipleFilesMode(!multipleFilesMode)}
+                  disabled={uploading}
+                />
+                <span className="toggle-text">Multiple Files</span>
+              </label>
+            </div>
+
+            <div className="option-toggle">
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  checked={compressFiles}
+                  onChange={() => setCompressFiles(!compressFiles)}
+                  disabled={uploading}
+                />
+                <span className="toggle-text">Compress Files</span>
+                {compressFiles && <span className="toggle-info">🔍 Smaller file size, may reduce quality</span>}
+              </label>
+            </div>
+          </div>
+
           <div
             {...getRootProps()}
-            className={`dropzone ${isDragActive ? 'active' : ''} ${file ? 'has-file' : ''}`}
+            className={`dropzone ${isDragActive ? 'active' : ''} ${files.length > 0 ? 'has-file' : ''}`}
           >
             <input {...getInputProps()} />
-            {file ? (
-              <div className="file-info">
-                <div className="file-icon">📄</div>
-                <div className="file-details">
-                  <p className="file-name">{file.name}</p>
-                  <p className="file-size">{formatFileSize(file.size)}</p>
-                  {useChunkedUpload && (
-                    <p className="upload-method">
-                      Large file detected - will use chunked upload ({totalChunks} chunks)
-                    </p>
-                  )}
-                </div>
+            {files.length > 0 ? (
+              <div className="files-list">
+                {files.length === 1 ? (
+                  // Single file view
+                  <div className="file-info">
+                    <div className="file-icon">📄</div>
+                    <div className="file-details">
+                      <p className="file-name">{files[0].name}</p>
+                      <p className="file-size">{formatFileSize(files[0].size)}</p>
+                      {useChunkedUpload && (
+                        <p className="upload-method">
+                          Large file detected - will use chunked upload ({totalChunks} chunks)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  // Multiple files view
+                  <div className="files-summary">
+                    <div className="files-icon">📚</div>
+                    <div className="files-details">
+                      <p className="files-count">{files.length} files selected</p>
+                      <p className="files-size">
+                        Total: {formatFileSize(files.reduce((total, file) => total + file.size, 0))}
+                      </p>
+                      <div className="files-preview">
+                        {files.slice(0, 3).map((file, index) => (
+                          <div key={index} className="file-preview-item">
+                            <span className="file-preview-name">{file.name}</span>
+                            <span className="file-preview-size">{formatFileSize(file.size)}</span>
+                          </div>
+                        ))}
+                        {files.length > 3 && (
+                          <div className="file-preview-more">
+                            +{files.length - 3} more files
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="dropzone-content">
                 <div className="upload-icon">📁</div>
-                <p>Drag & drop a file here, or click to select</p>
+                <p>Drag & drop {multipleFilesMode ? 'files' : 'a file'} here, or click to select</p>
+                {multipleFilesMode && <p className="dropzone-hint">You can select multiple files</p>}
               </div>
             )}
           </div>
 
-          {file && (
+          {files.length > 0 && (
             <div className="upload-actions">
               <button
                 className="upload-button"
                 onClick={handleUpload}
                 disabled={uploading}
               >
-                {uploading ? 'Uploading...' : 'Upload File'}
+                {uploading ? 'Uploading...' : `Upload ${files.length > 1 ? `${files.length} Files` : 'File'}`}
               </button>
               <button
                 className="reset-button"
@@ -328,30 +498,54 @@ const FileUpload = () => {
               >
                 Reset
               </button>
+              {compressFiles && (
+                <div className="compression-badge">
+                  <span>🗜️ Compression ON</span>
+                </div>
+              )}
             </div>
           )}
 
           {uploading && (
             <div className="upload-progress">
-              <div className="progress-bar">
-                <div
-                  className="progress-bar-fill"
-                  style={{ width: `${uploadProgress}%` }}
-                ></div>
-              </div>
-              <div className="progress-info">
-                <p>{uploadProgress}% uploaded</p>
-                {useChunkedUpload && (
-                  <p className="chunk-info">
-                    Chunk {currentChunk + 1} of {totalChunks}
-                  </p>
-                )}
-                <button
-                  className="cancel-button"
-                  onClick={handleCancelUpload}
-                >
-                  Cancel
-                </button>
+              {files.length > 1 && (
+                <div className="overall-progress">
+                  <h3>Overall Progress</h3>
+                  <div className="progress-bar overall">
+                    <div
+                      className="progress-bar-fill"
+                      style={{ width: `${overallProgress}%` }}
+                    ></div>
+                  </div>
+                  <div className="progress-info">
+                    <p>{overallProgress}% overall ({currentFileIndex + 1} of {files.length} files)</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="current-file-progress">
+                {files.length > 1 && <h3>Current File: {file?.name}</h3>}
+                <div className="progress-bar">
+                  <div
+                    className="progress-bar-fill"
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                </div>
+                <div className="progress-info">
+                  <p>{uploadProgress}% uploaded</p>
+                  {useChunkedUpload && (
+                    <p className="chunk-info">
+                      Chunk {currentChunk + 1} of {totalChunks}
+                    </p>
+                  )}
+                  {compressFiles && <p className="compression-info">🗜️ Compression enabled</p>}
+                  <button
+                    className="cancel-button"
+                    onClick={handleCancelUpload}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -365,21 +559,51 @@ const FileUpload = () => {
       ) : (
         <div className="upload-success">
           <div className="success-icon">✅</div>
-          <h2>File Uploaded Successfully!</h2>
-          <p>Your file <strong>{uploadResult.filename}</strong> has been uploaded.</p>
-          <p>Share this code with others to let them download your file:</p>
-          <div className="file-code">{uploadResult.code}</div>
-          <div className="success-actions">
-            <button className="copy-button" onClick={() => {
-              navigator.clipboard.writeText(uploadResult.code);
-              alert('Code copied to clipboard!');
-            }}>
-              Copy Code
-            </button>
-            <button className="new-upload-button" onClick={handleReset}>
-              Upload Another File
-            </button>
-          </div>
+          {uploadResults.length === 1 ? (
+            // Single file success view
+            <>
+              <h2>File Uploaded Successfully!</h2>
+              <p>Your file <strong>{uploadResults[0].filename}</strong> has been uploaded.</p>
+              <p>Share this code with others to let them download your file:</p>
+              <div className="file-code">{uploadResults[0].code}</div>
+              <div className="success-actions">
+                <button className="copy-button" onClick={() => {
+                  navigator.clipboard.writeText(uploadResults[0].code);
+                  alert('Code copied to clipboard!');
+                }}>
+                  Copy Code
+                </button>
+                <button className="new-upload-button" onClick={handleReset}>
+                  Upload Another File
+                </button>
+              </div>
+            </>
+          ) : (
+            // Multiple files success view
+            <>
+              <h2>Files Uploaded Successfully!</h2>
+              <p><strong>{uploadResults.length} files</strong> have been uploaded.</p>
+              <div className="files-codes-list">
+                {uploadResults.map((result, index) => (
+                  <div key={index} className="file-code-item">
+                    <div className="file-code-name">{result.filename}</div>
+                    <div className="file-code-value">{result.code}</div>
+                    <button className="copy-code-button" onClick={() => {
+                      navigator.clipboard.writeText(result.code);
+                      alert(`Code for ${result.filename} copied to clipboard!`);
+                    }}>
+                      Copy
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="success-actions">
+                <button className="new-upload-button" onClick={handleReset}>
+                  Upload More Files
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

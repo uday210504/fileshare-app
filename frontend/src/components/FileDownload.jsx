@@ -120,8 +120,25 @@ const FileDownload = () => {
             </div>
             <div className="detail-row">
               <span className="detail-label">Size:</span>
-              <span className="detail-value">{formatFileSize(fileInfo.size)}</span>
+              <span className="detail-value">
+                {formatFileSize(fileInfo.size)}
+                {fileInfo.compressed && fileInfo.originalSize && (
+                  <span className="compressed-info">
+                    (Original: {formatFileSize(fileInfo.originalSize)})
+                  </span>
+                )}
+              </span>
             </div>
+            {fileInfo.compressed && fileInfo.compressionRatio && (
+              <div className="detail-row compression-row">
+                <span className="detail-label">Compression:</span>
+                <span className="detail-value">
+                  <span className="compression-badge">
+                    🗜️ {fileInfo.compressionRatio}x smaller
+                  </span>
+                </span>
+              </div>
+            )}
             <div className="detail-row">
               <span className="detail-label">Uploaded:</span>
               <span className="detail-value">{formatDate(fileInfo.uploadDate)}</span>
