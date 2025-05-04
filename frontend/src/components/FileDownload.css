@@ -1,0 +1,141 @@
+.file-download {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.download-form {
+  background-color: var(--card-bg-dark);
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.form-description {
+  margin-bottom: 1.5rem;
+  color: #aaa;
+}
+
+.input-group {
+  margin-bottom: 1.5rem;
+}
+
+.input-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.code-input {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  font-size: 1.1rem;
+  border: 1px solid #444;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  transition: all 0.2s ease;
+  letter-spacing: 1px;
+}
+
+.code-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.3);
+}
+
+.check-button {
+  width: 100%;
+  margin-top: 1rem;
+}
+
+.file-info-card {
+  background-color: var(--card-bg-dark);
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  text-align: center;
+  animation: fadeIn 0.5s ease;
+}
+
+.file-info-card .file-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.file-details {
+  margin: 1.5rem 0;
+  text-align: left;
+}
+
+.detail-row {
+  display: flex;
+  margin-bottom: 0.8rem;
+  padding-bottom: 0.8rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.detail-row:last-child {
+  border-bottom: none;
+}
+
+.detail-label {
+  font-weight: 500;
+  width: 100px;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  flex: 1;
+  word-break: break-all;
+}
+
+.download-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.download-button {
+  flex: 1;
+  background-color: var(--success-color);
+}
+
+.back-button {
+  background-color: transparent;
+  border: 1px solid #666;
+  color: inherit;
+}
+
+.back-button:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  background-color: transparent;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  .download-form, .file-info-card {
+    background-color: var(--card-bg-light);
+  }
+  
+  .code-input {
+    background-color: rgba(0, 0, 0, 0.03);
+    border-color: #ddd;
+  }
+  
+  .detail-row {
+    border-bottom-color: rgba(0, 0, 0, 0.1);
+  }
+}

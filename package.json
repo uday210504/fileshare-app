@@ -1,0 +1,21 @@
+{
+  "name": "file-sharing-app",
+  "version": "1.0.0",
+  "description": "A web-based file sharing application",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "node build-and-deploy.js",
+    "deploy": "npm run build && npm start"
+  },
+  "keywords": [
+    "file-sharing",
+    "upload",
+    "download",
+    "web-app"
+  ],
+  "author": "",
+  "license": "MIT"
+}
