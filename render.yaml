@@ -10,3 +10,4 @@ services:
         value: 10000
       - key: FRONTEND_URL
         value: https://fileshare-app-eight.vercel.app
+    healthCheckPath: /api/health
