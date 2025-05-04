@@ -417,6 +417,13 @@
   transition: width 0.3s ease;
   position: relative;
   overflow: hidden;
+  animation: pulse-glow 2s infinite;
+}
+
+@keyframes pulse-glow {
+  0% { box-shadow: 0 0 5px rgba(67, 97, 238, 0.5); }
+  50% { box-shadow: 0 0 15px rgba(67, 97, 238, 0.8); }
+  100% { box-shadow: 0 0 5px rgba(67, 97, 238, 0.5); }
 }
 
 .progress-bar-fill::after {

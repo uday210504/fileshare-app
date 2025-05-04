@@ -28,30 +28,23 @@ const FileUpload = () => {
       // Reset any previous errors
       setError(null);
 
-      // Filter out duplicate files by name
-      const uniqueFiles = [];
-      const fileNames = new Set();
+      // Make a copy of the files array to ensure we're working with a stable array
+      const filesArray = [...acceptedFiles];
 
-      for (const file of acceptedFiles) {
-        if (!fileNames.has(file.name)) {
-          fileNames.add(file.name);
-          uniqueFiles.push(file);
-        }
-      }
-
-      // Store all dropped files
-      setFiles(uniqueFiles);
+      // Store all dropped files - no filtering for duplicates by name
+      // This ensures all selected files are processed, even if they have the same name
+      setFiles(filesArray);
       setCurrentFileIndex(0);
       setUploadResults([]);
 
       // Log the files being processed
-      console.log(`Dropped ${uniqueFiles.length} unique files:`);
-      uniqueFiles.forEach((file, index) => {
-        console.log(`File ${index + 1}: ${file.name}, size: ${formatFileSize(file.size)}`);
+      console.log(`Dropped ${filesArray.length} files:`);
+      filesArray.forEach((file, index) => {
+        console.log(`File ${index + 1}: ${file.name}, size: ${formatFileSize(file.size)}, type: ${file.type}`);
       });
 
       // Analyze the first file to determine upload method
-      const firstFile = uniqueFiles[0];
+      const firstFile = filesArray[0];
 
       // Use regular upload for very small files, chunked upload for larger files
       // This ensures small files upload successfully
@@ -81,6 +74,18 @@ const FileUpload = () => {
     multiple: multipleFilesMode // Use the state to control multiple file mode
   });
 
+  // Helper function to calculate overall progress
+  const calculateOverallProgress = (currentIndex, totalFiles, currentProgress) => {
+    // Calculate completed files contribution
+    const completedContribution = (currentIndex / totalFiles) * 100;
+
+    // Calculate current file contribution
+    const currentContribution = (currentProgress / 100) * (1 / totalFiles) * 100;
+
+    // Sum both contributions
+    return completedContribution + currentContribution;
+  };
+
   // Effect to update overall progress when processing multiple files
   useEffect(() => {
     if (files.length > 0) {
@@ -102,28 +107,38 @@ const FileUpload = () => {
 
   // Optimized regular upload for smaller files
   const handleRegularUpload = async () => {
+    // Get the current file based on the current index
+    const currentFile = files[currentFileIndex];
+
     // Validate file before uploading
-    if (!file || file.size === 0) {
+    if (!currentFile || currentFile.size === 0) {
+      console.error(`Invalid file at index ${currentFileIndex}`);
       setError('Invalid file. Please select a valid file.');
-      setUploading(false);
+
+      // Try to process next file if in multiple files mode
+      if (multipleFilesMode) {
+        processNextFile();
+      } else {
+        setUploading(false);
+      }
       return;
     }
 
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', currentFile);
 
     // Add optimization hints to the request
     formData.append('optimized', compressFiles ? 'true' : 'false');
 
     // Add file size info to help server optimize handling
-    formData.append('fileSize', file.size.toString());
+    formData.append('fileSize', currentFile.size.toString());
 
     try {
       // Create abort controller for cancellation
       abortControllerRef.current = new AbortController();
       const signal = abortControllerRef.current.signal;
 
-      console.log(`Starting regular upload for file: ${file.name}, size: ${file.size} bytes, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
+      console.log(`Starting regular upload for file: ${currentFile.name}, size: ${formatFileSize(currentFile.size)}, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
 
       // Important: Do NOT set Content-Type header for multipart/form-data
       // Let the browser set it automatically with the correct boundary
@@ -134,6 +149,14 @@ const FileUpload = () => {
           if (progressEvent.total) {
             const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
             setUploadProgress(percentCompleted);
+
+            // Update overall progress
+            const overallPercent = calculateOverallProgress(
+              currentFileIndex,
+              files.length,
+              percentCompleted
+            );
+            setOverallProgress(Math.min(Math.round(overallPercent), 99));
           } else {
             // For browsers that don't provide progress.total
             setUploadProgress(50); // Show some progress
@@ -143,7 +166,7 @@ const FileUpload = () => {
         timeout: 5 * 60 * 1000, // 5 minutes timeout
       });
 
-      console.log('Upload successful:', response.data);
+      console.log(`Upload successful for ${currentFile.name}:`, response.data);
 
       // Add to results array
       setUploadResults(prev => [...prev, response.data]);
@@ -153,12 +176,15 @@ const FileUpload = () => {
         processNextFile();
       } else {
         setUploading(false);
+        setOverallProgress(100);
       }
+
+      return response.data;
     } catch (err) {
       if (abortControllerRef.current?.signal.aborted) {
         setError('Upload was cancelled');
       } else {
-        console.error('Upload error:', err);
+        console.error(`Upload error for file ${currentFile.name}:`, err);
 
         // More detailed error message
         let errorMessage = 'Failed to upload file. Please try again.';
@@ -170,46 +196,64 @@ const FileUpload = () => {
         }
 
         // Add file info to error for better debugging
-        console.error(`Error uploading file: ${file.name}, size: ${formatFileSize(file.size)}`);
+        console.error(`Error uploading file: ${currentFile.name}, size: ${formatFileSize(currentFile.size)}`);
 
         setError(errorMessage);
+
+        // Even if there's an error with this file, try to process the next one
+        if (multipleFilesMode) {
+          processNextFile();
+        } else {
+          setUploading(false);
+        }
       }
-      setUploading(false);
+
+      throw err;
     }
   };
 
   // Chunked upload for larger files with parallel uploads
   const handleChunkedUpload = async () => {
+    // Get the current file based on the current index
+    const currentFile = files[currentFileIndex];
+
     // Validate file before uploading
-    if (!file || file.size === 0) {
+    if (!currentFile || currentFile.size === 0) {
+      console.error(`Invalid file at index ${currentFileIndex}`);
       setError('Invalid file. Please select a valid file.');
-      setUploading(false);
+
+      // Try to process next file if in multiple files mode
+      if (multipleFilesMode) {
+        processNextFile();
+      } else {
+        setUploading(false);
+      }
       return;
     }
 
     // Dynamically determine chunk size based on file size
     // Smaller chunks for smaller files, larger chunks for larger files
     let chunkSize = 5 * 1024 * 1024; // Default 5MB chunks
-    if (file.size > 100 * 1024 * 1024) { // For files > 100MB
+    if (currentFile.size > 100 * 1024 * 1024) { // For files > 100MB
       chunkSize = 10 * 1024 * 1024; // Use 10MB chunks
-    } else if (file.size < 20 * 1024 * 1024) { // For files < 20MB
+    } else if (currentFile.size < 20 * 1024 * 1024) { // For files < 20MB
       // For small files, use smaller chunks but ensure they're not too small
       // Minimum chunk size of 1MB to prevent excessive requests
-      chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(file.size / 4));
+      chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(currentFile.size / 4));
     }
 
     // Ensure chunk size is reasonable
-    chunkSize = Math.min(chunkSize, file.size); // Don't make chunks larger than the file
+    chunkSize = Math.min(chunkSize, currentFile.size); // Don't make chunks larger than the file
 
-    const chunks = Math.ceil(file.size / chunkSize);
+    const chunks = Math.ceil(currentFile.size / chunkSize);
     const uploadId = Date.now().toString() + '-' + Math.random().toString(36).substring(2, 10);
 
     // Determine optimal number of concurrent uploads based on file size and network conditions
     // More concurrent uploads for larger files, fewer for smaller files
     let concurrentUploads = 3; // Default
-    if (file.size > 100 * 1024 * 1024) {
+    if (currentFile.size > 100 * 1024 * 1024) {
       concurrentUploads = 4; // More concurrent uploads for very large files
-    } else if (file.size < 20 * 1024 * 1024) {
+    } else if (currentFile.size < 20 * 1024 * 1024) {
       concurrentUploads = 2; // Fewer concurrent uploads for smaller files
     }
 
@@ -221,16 +265,16 @@ const FileUpload = () => {
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
-    console.log(`Starting chunked upload for file: ${file.name}, size: ${formatFileSize(file.size)}, chunks: ${chunks}, concurrent uploads: ${concurrentUploads}, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
+    console.log(`Starting chunked upload for file: ${currentFile.name}, size: ${formatFileSize(currentFile.size)}, chunks: ${chunks}, concurrent uploads: ${concurrentUploads}, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
 
     try {
       // Step 1: Initialize the upload
       await api.post('/api/upload/init', {
         uploadId,
-        filename: file.name,
+        filename: currentFile.name,
         totalChunks: chunks,
-        fileSize: file.size,
-        mimeType: file.type,
+        fileSize: currentFile.size,
+        mimeType: currentFile.type,
         chunkSize // Send chunk size to server
       }, { signal });
 
@@ -248,8 +292,8 @@ const FileUpload = () => {
           setCurrentChunk(chunkIndex);
 
           const start = chunkIndex * chunkSize;
-          const end = Math.min(file.size, start + chunkSize);
-          const chunk = file.slice(start, end);
+          const end = Math.min(currentFile.size, start + chunkSize);
+          const chunk = currentFile.slice(start, end);
 
           // Validate chunk
           if (!chunk || chunk.size === 0) {
@@ -381,7 +425,7 @@ const FileUpload = () => {
         }
 
         // Add file info to error for better debugging
-        console.error(`Error uploading file: ${file.name}, size: ${formatFileSize(file.size)}`);
+        console.error(`Error uploading file: ${currentFile.name}, size: ${formatFileSize(currentFile.size)}`);
 
         // If we have failed chunks, add that info
         if (failedChunks.length > 0) {
@@ -394,8 +438,16 @@ const FileUpload = () => {
         }
 
         setError(errorMessage);
+
+        // Even if there's an error with this file, try to process the next one
+        if (multipleFilesMode) {
+          processNextFile();
+        } else {
+          setUploading(false);
+        }
       }
-      setUploading(false);
+
+      throw err;
     }
   };
 
@@ -415,6 +467,9 @@ const FileUpload = () => {
       // Move to the next file
       const nextIndex = currentFileIndex + 1;
 
+      // Debug log to track file processing
+      console.log(`Checking for next file. Current index: ${currentFileIndex}, Next index: ${nextIndex}, Total files: ${files.length}`);
+
       if (nextIndex < files.length) {
         // More files to process
         setCurrentFileIndex(nextIndex);
@@ -424,7 +479,7 @@ const FileUpload = () => {
         const nextFile = files[nextIndex];
 
         // Log which file we're processing now
-        console.log(`Processing next file (${nextIndex + 1}/${files.length}): ${nextFile.name}, size: ${formatFileSize(nextFile.size)}`);
+        console.log(`Processing next file (${nextIndex + 1}/${files.length}): ${nextFile.name}, size: ${formatFileSize(nextFile.size)}, type: ${nextFile.type}`);
 
         // Validate the file
         if (!nextFile || nextFile.size === 0) {
@@ -434,6 +489,10 @@ const FileUpload = () => {
           return;
         }
 
+        // Reset any previous errors
+        setError(null);
+
+        // Determine upload method based on file size
         const useChunks = nextFile.size > 2 * 1024 * 1024;
         setUseChunkedUpload(useChunks);
 
@@ -454,6 +513,8 @@ const FileUpload = () => {
         abortControllerRef.current = new AbortController();
 
         // Start uploading the next file
+        console.log(`Starting upload for file: ${nextFile.name} (${useChunks ? 'chunked' : 'regular'} upload)`);
+
         // We're using a new promise here to avoid recursive await calls
         const uploadPromise = useChunks ? handleChunkedUpload() : handleRegularUpload();
 
@@ -468,7 +529,7 @@ const FileUpload = () => {
         setUploading(false);
         setOverallProgress(100);
       }
-    }, 500); // Increased delay to ensure proper state updates between files
+    }, 800); // Increased delay to ensure proper state updates between files
   };
 
   // Main upload handler
@@ -489,7 +550,7 @@ const FileUpload = () => {
     // Log the upload process
     console.log(`Starting upload of ${files.length} files:`);
     files.forEach((file, index) => {
-      console.log(`File ${index + 1}: ${file.name}, size: ${formatFileSize(file.size)}`);
+      console.log(`File ${index + 1}: ${file.name}, size: ${formatFileSize(file.size)}, type: ${file.type}`);
     });
 
     // Validate the first file
@@ -508,6 +569,8 @@ const FileUpload = () => {
       const useChunksForFirstFile = firstFile.size > 2 * 1024 * 1024;
       setUseChunkedUpload(useChunksForFirstFile);
 
+      console.log(`Starting upload for first file: ${firstFile.name} (${useChunksForFirstFile ? 'chunked' : 'regular'} upload)`);
+
       if (useChunksForFirstFile) {
         await handleChunkedUpload();
       } else {
@@ -515,8 +578,24 @@ const FileUpload = () => {
       }
     } catch (err) {
       console.error('Upload error:', err);
-      setError('An unexpected error occurred. Please try again.');
-      setUploading(false);
+
+      // More detailed error message
+      let errorMessage = 'An unexpected error occurred. Please try again.';
+
+      if (err.message) {
+        errorMessage = err.message;
+      } else if (err.response?.data?.error) {
+        errorMessage = err.response.data.error;
+      }
+
+      setError(errorMessage);
+
+      // If we're in multiple files mode, try to continue with the next file
+      if (multipleFilesMode && currentFileIndex < files.length - 1) {
+        processNextFile();
+      } else {
+        setUploading(false);
+      }
     }
   };
 
@@ -660,13 +739,15 @@ const FileUpload = () => {
                     ></div>
                   </div>
                   <div className="progress-info">
-                    <p>{overallProgress}% overall ({currentFileIndex + 1} of {files.length} files)</p>
+                    <p>{Math.round(overallProgress)}% overall ({currentFileIndex + 1} of {files.length} files)</p>
                   </div>
                 </div>
               )}
 
               <div className="current-file-progress">
-                {files.length > 1 && <h3>Current File: {file?.name}</h3>}
+                {files.length > 1 && (
+                  <h3>Current File: {files[currentFileIndex]?.name || 'Processing...'}</h3>
+                )}
                 <div className="progress-bar">
                   <div
                     className="progress-bar-fill"
