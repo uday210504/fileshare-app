@@ -5,7 +5,7 @@ A modern web application that allows users to upload files and share them with o
 ## Live Demo
 
 - **Frontend**: [https://fileshare-app-eight.vercel.app](https://fileshare-app-eight.vercel.app)
-- **Backend**: [https://fileshare-app-production.up.railway.app](https://fileshare-app-production.up.railway.app)
+- **Backend**: [https://file-upload.up.railway.app](https://file-upload.up.railway.app)
 
 ## Features
 
@@ -84,7 +84,7 @@ The application is currently deployed online:
    - URL: [https://fileshare-app-eight.vercel.app](https://fileshare-app-eight.vercel.app)
 
 2. **Backend**: Deployed on Railway
-   - URL: [https://fileshare-app-production.up.railway.app](https://fileshare-app-production.up.railway.app)
+   - URL: [https://file-upload.up.railway.app](https://file-upload.up.railway.app)
 
 To update the deployment:
 

@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Configuration
-const BACKEND_URL = 'https://fileshare-app-production.up.railway.app';
+const BACKEND_URL = 'https://file-upload.up.railway.app';
 const FRONTEND_URL = 'https://fileshare-app-eight.vercel.app';
 
 console.log('Starting deployment preparation...');
