@@ -273,7 +273,6 @@ const FileUpload = () => {
 
       console.log(`Starting chunked upload with direct file reference: ${currentFile.name}`);
 
-
     // Dynamically determine chunk size based on file size
     // Smaller chunks for smaller files, larger chunks for larger files
     let chunkSize = 5 * 1024 * 1024; // Default 5MB chunks
@@ -503,7 +502,7 @@ const FileUpload = () => {
       // Return null to indicate failure
       return null;
     }
-  };
+  }
 
   // Cancel the ongoing upload
   const handleCancelUpload = () => {
