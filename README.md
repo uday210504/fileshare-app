@@ -2,6 +2,11 @@
 
 A modern web application that allows users to upload files and share them with others using unique codes.
 
+## Live Demo
+
+- **Frontend**: [https://fileshare-app-eight.vercel.app](https://fileshare-app-eight.vercel.app)
+- **Backend**: [https://fileshare-app-production.up.railway.app](https://fileshare-app-production.up.railway.app)
+
 ## Features
 
 - **File Upload**: Drag and drop interface with progress tracking
@@ -44,7 +49,7 @@ A modern web application that allows users to upload files and share them with o
    ```
    # In one terminal
    npm run dev:backend
-   
+
    # In another terminal
    npm run dev:frontend
    ```
@@ -73,25 +78,24 @@ To deploy the application locally:
 
 ### Online Deployment
 
-To make the application accessible online:
+The application is currently deployed online:
 
-1. Choose a hosting provider (Heroku, DigitalOcean, AWS, etc.)
+1. **Frontend**: Deployed on Vercel
+   - URL: [https://fileshare-app-eight.vercel.app](https://fileshare-app-eight.vercel.app)
 
-2. Deploy the application:
+2. **Backend**: Deployed on Railway
+   - URL: [https://fileshare-app-production.up.railway.app](https://fileshare-app-production.up.railway.app)
+
+To update the deployment:
+
+1. Make your changes to the code
+2. Run the deployment script:
    ```
-   npm run build
+   node deploy.js
    ```
-
-3. Upload the entire project to your hosting provider
-
-4. Configure your hosting provider to run:
-   ```
-   npm start
-   ```
-
-5. Set up a domain name (optional)
-
-6. Configure your firewall/router to allow traffic on port 5000 (or the port you've configured)
+3. Commit and push your changes to GitHub
+4. Railway will automatically redeploy the backend
+5. Manually trigger a redeployment on Vercel if needed
 
 ## Configuration
 
