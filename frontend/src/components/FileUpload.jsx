@@ -103,9 +103,10 @@ const FileUpload = () => {
 
       console.log(`Starting regular upload for file: ${file.name}, size: ${file.size} bytes`);
 
+      // Important: Do NOT set Content-Type header for multipart/form-data
+      // Let the browser set it automatically with the correct boundary
       const response = await api.post('/api/upload', formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
           'X-Requested-With': 'XMLHttpRequest', // Add this header for better server handling
           'Cache-Control': 'no-cache', // Prevent caching
         },
@@ -207,10 +208,9 @@ const FileUpload = () => {
           formData.append('uploadId', uploadId);
           formData.append('chunkIndex', chunkIndex);
 
+          // Important: Do NOT set Content-Type header for multipart/form-data
+          // Let the browser set it automatically with the correct boundary
           await api.post('/api/upload/chunk', formData, {
-            headers: {
-              'Content-Type': 'multipart/form-data'
-            },
             signal,
             // We'll handle progress separately for parallel uploads
             onUploadProgress: (progressEvent) => {
@@ -304,50 +304,51 @@ const FileUpload = () => {
   };
 
   // Process the next file in the queue
-  const processNextFile = async () => {
-    // Move to the next file
-    const nextIndex = currentFileIndex + 1;
+  const processNextFile = () => {
+    // Use setTimeout to prevent stack overflow with recursive calls
+    // This also gives the UI a chance to update between files
+    setTimeout(() => {
+      // Move to the next file
+      const nextIndex = currentFileIndex + 1;
 
-    if (nextIndex < files.length) {
-      // More files to process
-      setCurrentFileIndex(nextIndex);
-      setUploadProgress(0);
+      if (nextIndex < files.length) {
+        // More files to process
+        setCurrentFileIndex(nextIndex);
+        setUploadProgress(0);
 
-      // Determine upload method for the next file
-      const nextFile = files[nextIndex];
-      const useChunks = nextFile.size > 2 * 1024 * 1024;
-      setUseChunkedUpload(useChunks);
+        // Determine upload method for the next file
+        const nextFile = files[nextIndex];
+        const useChunks = nextFile.size > 2 * 1024 * 1024;
+        setUseChunkedUpload(useChunks);
 
-      if (useChunks) {
-        let chunkSize = 5 * 1024 * 1024;
-        if (nextFile.size > 100 * 1024 * 1024) {
-          chunkSize = 10 * 1024 * 1024;
-        } else if (nextFile.size < 20 * 1024 * 1024) {
-          chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(nextFile.size / 4));
-        }
-
-        const chunks = Math.ceil(nextFile.size / chunkSize);
-        setTotalChunks(chunks);
-        setCurrentChunk(0);
-      }
-
-      // Start uploading the next file
-      try {
         if (useChunks) {
-          await handleChunkedUpload();
-        } else {
-          await handleRegularUpload();
+          let chunkSize = 5 * 1024 * 1024;
+          if (nextFile.size > 100 * 1024 * 1024) {
+            chunkSize = 10 * 1024 * 1024;
+          } else if (nextFile.size < 20 * 1024 * 1024) {
+            chunkSize = Math.max(1 * 1024 * 1024, Math.ceil(nextFile.size / 4));
+          }
+
+          const chunks = Math.ceil(nextFile.size / chunkSize);
+          setTotalChunks(chunks);
+          setCurrentChunk(0);
         }
-      } catch (err) {
-        console.error(`Error uploading file ${nextIndex}:`, err);
-        // Continue with next file despite error
-        processNextFile();
+
+        // Start uploading the next file
+        // We're using a new promise here to avoid recursive await calls
+        const uploadPromise = useChunks ? handleChunkedUpload() : handleRegularUpload();
+
+        uploadPromise.catch(err => {
+          console.error(`Error uploading file ${nextIndex}:`, err);
+          // Continue with next file despite error
+          processNextFile();
+        });
+      } else {
+        // All files processed
+        setUploading(false);
+        setOverallProgress(100);
       }
-    } else {
-      // All files processed
-      setUploading(false);
-      setOverallProgress(100);
-    }
+    }, 100); // Small delay to prevent UI freezing
   };
 
   // Main upload handler
