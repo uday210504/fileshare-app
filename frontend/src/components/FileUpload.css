@@ -43,12 +43,14 @@
 
 .upload-options {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   margin-bottom: 1.5rem;
   background: rgba(255, 255, 255, 0.05);
   padding: 1rem;
   border-radius: 10px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  gap: 1rem;
 }
 
 .option-toggle {
@@ -105,6 +107,32 @@
   font-size: 0.8rem;
   color: #aaa;
   animation: fadeIn 0.3s ease;
+}
+
+.group-name-input {
+  flex-basis: 100%;
+  margin-top: 0.5rem;
+}
+
+.group-name-field {
+  width: 100%;
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-color);
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+}
+
+.group-name-field:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.2);
+  outline: none;
+}
+
+.group-name-field::placeholder {
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .dropzone {
@@ -604,6 +632,52 @@
   gap: 1rem;
   margin-top: 2rem;
   justify-content: center;
+}
+
+.group-files-info {
+  margin-top: 2rem;
+  text-align: left;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  padding: 1rem;
+  animation: fadeIn 0.5s ease;
+}
+
+.group-files-info h3 {
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+  color: var(--text-color);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.5rem;
+}
+
+.files-list-compact {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.group-file-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.group-file-item:last-child {
+  border-bottom: none;
+}
+
+.group-file-name {
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70%;
+}
+
+.group-file-size {
+  font-size: 0.8rem;
+  color: #aaa;
 }
 
 .copy-button {

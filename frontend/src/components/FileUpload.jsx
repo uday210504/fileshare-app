@@ -3,6 +3,20 @@ import { useDropzone } from 'react-dropzone';
 import api from '../utils/api';
 import './FileUpload.css';
 
+// Helper function to create a file group
+const createFileGroup = async (fileIds, groupName) => {
+  try {
+    const response = await api.post('/api/group', {
+      fileIds,
+      groupName
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error creating file group:', error);
+    throw error;
+  }
+};
+
 const FileUpload = () => {
   const [files, setFiles] = useState([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
@@ -15,6 +29,9 @@ const FileUpload = () => {
   const [totalChunks, setTotalChunks] = useState(0);
   const [multipleFilesMode, setMultipleFilesMode] = useState(true);
   const [compressFiles, setCompressFiles] = useState(false);
+  const [createGroup, setCreateGroup] = useState(true); // Default to creating a group for multiple files
+  const [groupInfo, setGroupInfo] = useState(null); // Store group info when created
+  const [groupName, setGroupName] = useState(''); // Optional group name
   const abortControllerRef = useRef(null);
   const processingRef = useRef(false); // Track if we're currently processing a file
 
@@ -117,14 +134,15 @@ const FileUpload = () => {
   };
 
   // Optimized regular upload for smaller files
-  const handleRegularUpload = async () => {
+  const handleRegularUpload = async (fileToUpload, fileIndex) => {
     try {
-      // Get the current file based on the current index
-      const currentFile = files[currentFileIndex];
+      // Use the provided file or fall back to the current file from state
+      const currentFile = fileToUpload || files[currentFileIndex];
+      const currentIndex = fileIndex !== undefined ? fileIndex : currentFileIndex;
 
       // Validate file before uploading
       if (!currentFile || currentFile.size === 0) {
-        console.error(`Invalid file at index ${currentFileIndex}`);
+        console.error(`Invalid file at index ${currentIndex}`);
         setError('Invalid file. Please select a valid file.');
 
         // Try to process next file if in multiple files mode
@@ -166,7 +184,7 @@ const FileUpload = () => {
 
             // Update overall progress
             const overallPercent = calculateOverallProgress(
-              currentFileIndex,
+              currentIndex,
               files.length,
               percentCompleted
             );
@@ -206,8 +224,8 @@ const FileUpload = () => {
       }
 
       // Get the current file for error reporting
-      const currentFile = files[currentFileIndex];
-      const fileName = currentFile ? currentFile.name : `file at index ${currentFileIndex}`;
+      const currentFile = fileToUpload || files[currentFileIndex];
+      const fileName = currentFile ? currentFile.name : `file at index ${fileIndex || currentFileIndex}`;
       const fileSize = currentFile ? formatFileSize(currentFile.size) : 'unknown size';
 
       console.error(`Upload error for ${fileName}:`, err);
@@ -233,14 +251,15 @@ const FileUpload = () => {
   };
 
   // Chunked upload for larger files with parallel uploads
-  const handleChunkedUpload = async () => {
+  const handleChunkedUpload = async (fileToUpload, fileIndex) => {
     try {
-      // Get the current file based on the current index
-      const currentFile = files[currentFileIndex];
+      // Use the provided file or fall back to the current file from state
+      const currentFile = fileToUpload || files[currentFileIndex];
+      const currentIndex = fileIndex !== undefined ? fileIndex : currentFileIndex;
 
       // Validate file before uploading
       if (!currentFile || currentFile.size === 0) {
-        console.error(`Invalid file at index ${currentFileIndex}`);
+        console.error(`Invalid file at index ${currentIndex}`);
         setError('Invalid file. Please select a valid file.');
 
         // Try to process next file if in multiple files mode
@@ -251,6 +270,9 @@ const FileUpload = () => {
           return null;
         }
       }
+
+      console.log(`Starting chunked upload with direct file reference: ${currentFile.name}`);
+
 
     // Dynamically determine chunk size based on file size
     // Smaller chunks for smaller files, larger chunks for larger files
@@ -512,11 +534,13 @@ const FileUpload = () => {
         console.log(`Checking for next file. Current index: ${currentFileIndex}, Next index: ${nextIndex}, Total files: ${files.length}`);
 
         if (nextIndex < files.length) {
-          // More files to process
+          // More files to process - IMPORTANT: We need to update the state and wait for it to be applied
           setCurrentFileIndex(nextIndex);
+
+          // Reset progress for the new file
           setUploadProgress(0);
 
-          // Determine upload method for the next file
+          // Get a direct reference to the next file to avoid state closure issues
           const nextFile = files[nextIndex];
 
           if (!nextFile) {
@@ -548,8 +572,9 @@ const FileUpload = () => {
           abortControllerRef.current = new AbortController();
 
           // We need to wait for state updates to complete before starting the upload
-          // This ensures that the UI is updated correctly
+          // This ensures that the UI is updated correctly and the correct file is used
           setTimeout(() => {
+            // Update the chunked upload state
             setUseChunkedUpload(useChunks);
 
             if (useChunks) {
@@ -565,26 +590,139 @@ const FileUpload = () => {
               setCurrentChunk(0);
             }
 
-            // Start uploading the next file after a short delay to ensure state updates
+            // Start uploading the next file after a longer delay to ensure state updates are fully applied
             setTimeout(() => {
-              console.log(`Starting upload for file: ${nextFile.name} (${useChunks ? 'chunked' : 'regular'} upload)`);
+              // Double-check that we're still on the correct file index
+              if (currentFileIndex !== nextIndex) {
+                console.error(`File index mismatch: expected ${nextIndex}, got ${currentFileIndex}`);
+                // Force the correct index
+                setCurrentFileIndex(nextIndex);
 
-              // We're using a new promise here to avoid recursive await calls
-              const uploadPromise = useChunks ? handleChunkedUpload() : handleRegularUpload();
+                // Wait a bit more before proceeding
+                setTimeout(() => {
+                  console.log(`Starting upload for file: ${nextFile.name} (${useChunks ? 'chunked' : 'regular'} upload)`);
 
-              uploadPromise
-                .then(() => {
-                  console.log(`Successfully uploaded file: ${nextFile.name}`);
-                  processingRef.current = false;
-                })
-                .catch(err => {
-                  console.error(`Error uploading file ${nextIndex} (${nextFile.name}):`, err);
-                  processingRef.current = false;
-                  // Continue with next file despite error
-                  processNextFile();
-                });
-            }, 300);
-          }, 300);
+                  // Create a new FormData for this specific file to avoid any state issues
+                  const formData = new FormData();
+                  formData.append('file', nextFile);
+                  formData.append('optimized', compressFiles ? 'true' : 'false');
+                  formData.append('fileSize', nextFile.size.toString());
+
+                  // We're using a direct upload approach to avoid state closure issues
+                  const uploadPromise = useChunks
+                    ? handleChunkedUpload(nextFile, nextIndex)
+                    : handleDirectUpload(formData, nextFile, nextIndex);
+
+                  uploadPromise
+                    .then(async (result) => {
+                      console.log(`Successfully uploaded file: ${nextFile.name}`);
+                      processingRef.current = false;
+
+                      // If we have more files to process, continue
+                      if (nextIndex + 1 < files.length) {
+                        processNextFile();
+                      } else {
+                        // All files processed
+                        console.log(`All ${files.length} files processed successfully`);
+
+                        // If we want to create a group
+                        if (createGroup && files.length > 1) {
+                          console.log('Creating file group...');
+
+                          try {
+                            // Get all file IDs from the upload results
+                            const fileIds = uploadResults.map(result => result.code);
+
+                            // Create the group
+                            const groupResult = await createFileGroup(fileIds, groupName || undefined);
+                            console.log('Group created:', groupResult);
+
+                            // Store the group info
+                            setGroupInfo(groupResult);
+                          } catch (error) {
+                            console.error('Failed to create group:', error);
+                            setError('Files were uploaded but failed to create group. You can still use individual file codes.');
+                          }
+                        }
+
+                        setUploading(false);
+                        setOverallProgress(100);
+                      }
+                    })
+                    .catch(err => {
+                      console.error(`Error uploading file ${nextIndex} (${nextFile.name}):`, err);
+                      processingRef.current = false;
+                      // Continue with next file despite error
+                      if (nextIndex + 1 < files.length) {
+                        processNextFile();
+                      } else {
+                        setUploading(false);
+                      }
+                    });
+                }, 500);
+              } else {
+                console.log(`Starting upload for file: ${nextFile.name} (${useChunks ? 'chunked' : 'regular'} upload)`);
+
+                // Create a new FormData for this specific file to avoid any state issues
+                const formData = new FormData();
+                formData.append('file', nextFile);
+                formData.append('optimized', compressFiles ? 'true' : 'false');
+                formData.append('fileSize', nextFile.size.toString());
+
+                // We're using a direct upload approach to avoid state closure issues
+                const uploadPromise = useChunks
+                  ? handleChunkedUpload(nextFile, nextIndex)
+                  : handleDirectUpload(formData, nextFile, nextIndex);
+
+                uploadPromise
+                  .then(async (result) => {
+                    console.log(`Successfully uploaded file: ${nextFile.name}`);
+                    processingRef.current = false;
+
+                    // If we have more files to process, continue
+                    if (nextIndex + 1 < files.length) {
+                      processNextFile();
+                    } else {
+                      // All files processed
+                      console.log(`All ${files.length} files processed successfully`);
+
+                      // If we want to create a group
+                      if (createGroup && files.length > 1) {
+                        console.log('Creating file group...');
+
+                        try {
+                          // Get all file IDs from the upload results
+                          const fileIds = uploadResults.map(result => result.code);
+
+                          // Create the group
+                          const groupResult = await createFileGroup(fileIds, groupName || undefined);
+                          console.log('Group created:', groupResult);
+
+                          // Store the group info
+                          setGroupInfo(groupResult);
+                        } catch (error) {
+                          console.error('Failed to create group:', error);
+                          setError('Files were uploaded but failed to create group. You can still use individual file codes.');
+                        }
+                      }
+
+                      setUploading(false);
+                      setOverallProgress(100);
+                    }
+                  })
+                  .catch(err => {
+                    console.error(`Error uploading file ${nextIndex} (${nextFile.name}):`, err);
+                    processingRef.current = false;
+                    // Continue with next file despite error
+                    if (nextIndex + 1 < files.length) {
+                      processNextFile();
+                    } else {
+                      setUploading(false);
+                    }
+                  });
+              }
+            }, 500);
+          }, 500);
         } else {
           // All files processed
           console.log(`All ${files.length} files processed successfully`);
@@ -597,6 +735,86 @@ const FileUpload = () => {
         processingRef.current = false;
       }
     }, 1000); // Increased delay to ensure proper state updates between files
+  };
+
+  // Direct upload function that doesn't rely on component state
+  const handleDirectUpload = async (formData, file, fileIndex) => {
+    try {
+      // Create abort controller for cancellation if not already created
+      if (!abortControllerRef.current) {
+        abortControllerRef.current = new AbortController();
+      }
+      const signal = abortControllerRef.current.signal;
+
+      console.log(`Starting direct upload for file: ${file.name}, size: ${formatFileSize(file.size)}, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
+
+      // Important: Do NOT set Content-Type header for multipart/form-data
+      const response = await api.post('/api/upload', formData, {
+        signal,
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percentCompleted);
+
+            // Update overall progress
+            const overallPercent = calculateOverallProgress(
+              fileIndex,
+              files.length,
+              percentCompleted
+            );
+            setOverallProgress(Math.min(Math.round(overallPercent), 99));
+          } else {
+            setUploadProgress(50); // Show some progress
+          }
+        },
+        timeout: 5 * 60 * 1000, // 5 minutes timeout
+      });
+
+      // Check if the response is valid
+      if (!response || !response.data) {
+        throw new Error('Invalid response from server');
+      }
+
+      console.log(`Upload successful for ${file.name}:`, response.data);
+
+      // Add to results array - use a callback to ensure we're working with the latest state
+      setUploadResults(prev => {
+        const newResults = [...prev, response.data];
+        console.log(`Updated upload results: ${newResults.length} files`);
+        return newResults;
+      });
+
+      // Update progress to 100% for this file
+      setUploadProgress(100);
+
+      // Return the response data to indicate success
+      return response.data;
+    } catch (err) {
+      if (abortControllerRef.current?.signal.aborted) {
+        setError('Upload was cancelled');
+        return null;
+      }
+
+      console.error(`Upload error for ${file.name}:`, err);
+
+      // More detailed error message
+      let errorMessage = 'Failed to upload file. Please try again.';
+
+      if (err.message) {
+        errorMessage = err.message;
+      } else if (err.response?.data?.error) {
+        errorMessage = err.response.data.error;
+      }
+
+      // Add file info to error for better debugging
+      console.error(`Error uploading file: ${file.name}, size: ${formatFileSize(file.size)}`);
+
+      // Set the error message but don't clear it immediately
+      setError(errorMessage);
+
+      // Return null to indicate failure
+      return null;
+    }
   };
 
   // Main upload handler
@@ -675,7 +893,36 @@ const FileUpload = () => {
           // If the upload was successful and we're in multiple files mode
           if (result && multipleFilesMode && validFiles.length > 1) {
             processingRef.current = false;
-            processNextFile();
+
+            // If this is the last file and we want to create a group
+            if (nextIndex + 1 >= validFiles.length && createGroup) {
+              // We've processed all files, now create a group
+              console.log('All files uploaded, creating group...');
+
+              // Get all file IDs from the upload results
+              const fileIds = uploadResults.map(result => result.code);
+
+              try {
+                // Create the group
+                const groupResult = await createFileGroup(fileIds, groupName || undefined);
+                console.log('Group created:', groupResult);
+
+                // Store the group info
+                setGroupInfo(groupResult);
+
+                // Set overall progress to 100%
+                setOverallProgress(100);
+                setUploading(false);
+              } catch (error) {
+                console.error('Failed to create group:', error);
+                setError('Files were uploaded but failed to create group. You can still use individual file codes.');
+                setOverallProgress(100);
+                setUploading(false);
+              }
+            } else {
+              // Process the next file
+              processNextFile();
+            }
           } else {
             // If we only had one file or the upload failed
             processingRef.current = false;
@@ -746,6 +993,8 @@ const FileUpload = () => {
     setCurrentChunk(0);
     setTotalChunks(0);
     setCurrentFileIndex(0);
+    setGroupInfo(null);
+    setGroupName('');
 
     // Reset processing flag
     processingRef.current = false;
@@ -766,12 +1015,33 @@ const FileUpload = () => {
                 <input
                   type="checkbox"
                   checked={multipleFilesMode}
-                  onChange={() => setMultipleFilesMode(!multipleFilesMode)}
+                  onChange={() => {
+                    setMultipleFilesMode(!multipleFilesMode);
+                    // If turning off multiple files mode, also turn off group creation
+                    if (!multipleFilesMode === false) {
+                      setCreateGroup(false);
+                    }
+                  }}
                   disabled={uploading}
                 />
                 <span className="toggle-text">Multiple Files</span>
               </label>
             </div>
+
+            {multipleFilesMode && (
+              <div className="option-toggle">
+                <label className="toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={createGroup}
+                    onChange={() => setCreateGroup(!createGroup)}
+                    disabled={uploading}
+                  />
+                  <span className="toggle-text">Create Group</span>
+                  {createGroup && <span className="toggle-info">📦 All files share one code</span>}
+                </label>
+              </div>
+            )}
 
             <div className="option-toggle">
               <label className="toggle-label">
@@ -785,6 +1055,19 @@ const FileUpload = () => {
                 {compressFiles && <span className="toggle-info">🔍 Smaller file size, may reduce quality</span>}
               </label>
             </div>
+
+            {multipleFilesMode && createGroup && (
+              <div className="group-name-input">
+                <input
+                  type="text"
+                  placeholder="Group Name (optional)"
+                  value={groupName}
+                  onChange={(e) => setGroupName(e.target.value)}
+                  disabled={uploading}
+                  className="group-name-field"
+                />
+              </div>
+            )}
           </div>
 
           <div
@@ -922,7 +1205,38 @@ const FileUpload = () => {
       ) : (
         <div className="upload-success">
           <div className="success-icon">✅</div>
-          {uploadResults.length === 1 ? (
+          {groupInfo ? (
+            // Group success view
+            <>
+              <h2>Files Uploaded as a Group!</h2>
+              <p><strong>{groupInfo.fileCount} files</strong> have been uploaded as a group.</p>
+              <p>Share this single code to let others download all files:</p>
+              <div className="file-code">{groupInfo.groupCode}</div>
+              <div className="success-actions">
+                <button className="copy-button" onClick={() => {
+                  navigator.clipboard.writeText(groupInfo.groupCode);
+                  alert('Group code copied to clipboard!');
+                }}>
+                  Copy Group Code
+                </button>
+                <button className="new-upload-button" onClick={handleReset}>
+                  Upload More Files
+                </button>
+              </div>
+
+              <div className="group-files-info">
+                <h3>Files in this group:</h3>
+                <div className="files-list-compact">
+                  {groupInfo.files.map((file, index) => (
+                    <div key={index} className="group-file-item">
+                      <span className="group-file-name">{file.filename}</span>
+                      <span className="group-file-size">{formatFileSize(file.size)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : uploadResults.length === 1 ? (
             // Single file success view
             <>
               <h2>File Uploaded Successfully!</h2>
@@ -942,7 +1256,7 @@ const FileUpload = () => {
               </div>
             </>
           ) : (
-            // Multiple files success view
+            // Multiple files success view (individual codes)
             <>
               <h2>Files Uploaded Successfully!</h2>
               <p><strong>{uploadResults.length} files</strong> have been uploaded.</p>
