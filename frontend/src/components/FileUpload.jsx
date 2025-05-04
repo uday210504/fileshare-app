@@ -815,7 +815,7 @@ const FileUpload = () => {
       // Return null to indicate failure
       return null;
     }
-  };
+  }
 
   // Main upload handler
   const handleUpload = async () => {
@@ -895,7 +895,7 @@ const FileUpload = () => {
             processingRef.current = false;
 
             // If this is the last file and we want to create a group
-            if (nextIndex + 1 >= validFiles.length && createGroup) {
+            if (currentFileIndex + 1 >= validFiles.length && createGroup) {
               // We've processed all files, now create a group
               console.log('All files uploaded, creating group...');
 
