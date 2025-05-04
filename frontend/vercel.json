@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://fileshare-app-production.up.railway.app/api/:path*"
+      "destination": "https://fileshare-backend.onrender.com/api/:path*"
     },
     {
       "source": "/(.*)",
