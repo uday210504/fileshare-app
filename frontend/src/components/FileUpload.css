@@ -799,3 +799,10 @@
   font-weight: bold;
   color: #4953db;
 }
+
+.group-option-description {
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  color: #8894ff;
+  padding-left: 48px;
+}
