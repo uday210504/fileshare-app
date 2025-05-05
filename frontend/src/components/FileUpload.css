@@ -107,6 +107,11 @@
   font-size: 0.8rem;
   color: #aaa;
   animation: fadeIn 0.3s ease;
+  white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
 }
 
 .group-name-input {

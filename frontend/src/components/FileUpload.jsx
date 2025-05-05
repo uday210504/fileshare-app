@@ -228,6 +228,17 @@ const FileUpload = () => {
 
       // Add to results array - use a callback to ensure we're working with the latest state
       setUploadResults(prev => {
+        // Check if this file is already in the results (by uniqueIdentifier if available, or by code)
+        const isDuplicate = prev.some(item =>
+          (response.data.uniqueIdentifier && item.uniqueIdentifier === response.data.uniqueIdentifier) ||
+          item.code === response.data.code
+        );
+
+        if (isDuplicate) {
+          console.log(`Skipping duplicate result for ${currentFile.name}`);
+          return prev;
+        }
+
         const newResults = [...prev, response.data];
         console.log(`Updated upload results: ${newResults.length} files`);
         return newResults;
@@ -474,8 +485,12 @@ const FileUpload = () => {
         // We need to return a Promise that resolves when the state is updated
         await new Promise(resolve => {
           setUploadResults(prev => {
-            // Make sure we don't add duplicate results
-            const isDuplicate = prev.some(item => item.code === response.data.code);
+            // Make sure we don't add duplicate results - check by uniqueIdentifier if available
+            const isDuplicate = prev.some(item =>
+              (response.data.uniqueIdentifier && item.uniqueIdentifier === response.data.uniqueIdentifier) ||
+              item.code === response.data.code
+            );
+
             if (isDuplicate) {
               console.log(`Skipping duplicate result for ${currentFile.name}`);
               setTimeout(() => resolve(), 0);
@@ -854,8 +869,12 @@ const FileUpload = () => {
       // We need to return a Promise that resolves when the state is updated
       await new Promise(resolve => {
         setUploadResults(prev => {
-          // Make sure we don't add duplicate results
-          const isDuplicate = prev.some(item => item.code === response.data.code);
+          // Make sure we don't add duplicate results - check by uniqueIdentifier if available
+          const isDuplicate = prev.some(item =>
+            (response.data.uniqueIdentifier && item.uniqueIdentifier === response.data.uniqueIdentifier) ||
+            item.code === response.data.code
+          );
+
           if (isDuplicate) {
             console.log(`Skipping duplicate result for ${file.name}`);
             setTimeout(() => resolve(), 0);
@@ -1328,7 +1347,18 @@ const FileUpload = () => {
             // Multiple files success view (individual codes)
             <>
               <h2>Files Uploaded Successfully!</h2>
-              <p><strong>{uploadResults.length} files</strong> have been uploaded.</p>
+              <p><strong>{(() => {
+                // Count unique files by using a Set of unique identifiers or filenames
+                const uniqueFiles = new Set();
+                uploadResults.forEach(result => {
+                  if (result.uniqueIdentifier) {
+                    uniqueFiles.add(result.uniqueIdentifier);
+                  } else {
+                    uniqueFiles.add(result.filename + result.code); // Fallback to filename+code
+                  }
+                });
+                return uniqueFiles.size;
+              })()} files</strong> have been uploaded.</p>
 
               {/* Handle duplicate filenames with improved numbering */}
               <div className="files-codes-list">
