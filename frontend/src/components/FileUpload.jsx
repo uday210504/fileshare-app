@@ -6,10 +6,31 @@ import './FileUpload.css';
 // Helper function to create a file group
 const createFileGroup = async (fileIds, groupName) => {
   try {
+    // Validate input
+    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+      throw new Error('No file IDs provided for group creation');
+    }
+
+    // Log the request for debugging
+    console.log(`Sending group creation request with ${fileIds.length} files:`, {
+      fileIds,
+      groupName: groupName || '(unnamed group)'
+    });
+
+    // Make the API call with a timeout
     const response = await api.post('/api/group', {
       fileIds,
       groupName
+    }, {
+      timeout: 10000 // 10 second timeout for group creation
     });
+
+    // Validate the response
+    if (!response || !response.data || !response.data.groupCode) {
+      throw new Error('Invalid response from server when creating group');
+    }
+
+    console.log('Group creation response:', response.data);
     return response.data;
   } catch (error) {
     console.error('Error creating file group:', error);
@@ -453,6 +474,14 @@ const FileUpload = () => {
         // We need to return a Promise that resolves when the state is updated
         await new Promise(resolve => {
           setUploadResults(prev => {
+            // Make sure we don't add duplicate results
+            const isDuplicate = prev.some(item => item.code === response.data.code);
+            if (isDuplicate) {
+              console.log(`Skipping duplicate result for ${currentFile.name}`);
+              setTimeout(() => resolve(), 0);
+              return prev;
+            }
+
             const newResults = [...prev, response.data];
             console.log(`Updated upload results: ${newResults.length} files`);
             // Use setTimeout to ensure the state update is processed before resolving
@@ -579,6 +608,10 @@ const FileUpload = () => {
           const useChunks = nextFile.size > 2 * 1024 * 1024;
 
           // Create a new abort controller for this file
+          if (abortControllerRef.current) {
+            // Make sure to create a new one to avoid issues with previous uploads
+            abortControllerRef.current = null;
+          }
           abortControllerRef.current = new AbortController();
 
           // We need to wait for state updates to complete before starting the upload
@@ -610,40 +643,66 @@ const FileUpload = () => {
               formData.append('fileSize', nextFile.size.toString());
 
               // Use the appropriate upload method
-              const uploadPromise = useChunks
-                ? handleChunkedUpload(nextFile, nextIndex)
-                : handleDirectUpload(formData, nextFile, nextIndex);
+              let uploadPromise;
+
+              try {
+                uploadPromise = useChunks
+                  ? handleChunkedUpload(nextFile, nextIndex)
+                  : handleDirectUpload(formData, nextFile, nextIndex);
+
+                if (!uploadPromise || typeof uploadPromise.then !== 'function') {
+                  throw new Error('Upload method did not return a valid promise');
+                }
+              } catch (err) {
+                console.error(`Error starting upload for file ${nextFile.name}:`, err);
+                processingRef.current = false;
+
+                // Try to continue with next file despite error
+                if (nextIndex + 1 < files.length) {
+                  setTimeout(() => processNextFile(), 300);
+                } else {
+                  setUploading(false);
+                  setOverallProgress(100);
+                }
+                return;
+              }
 
               uploadPromise
                 .then(async (result) => {
                   console.log(`Successfully uploaded file: ${nextFile.name}`);
+
+                  // Release the processing lock before continuing
                   processingRef.current = false;
 
                   // If we have more files to process, continue
                   if (nextIndex + 1 < files.length) {
-                    processNextFile();
+                    // Use a small timeout to prevent stack overflow and ensure state updates
+                    setTimeout(() => processNextFile(), 300);
                   } else {
                     // All files processed
                     console.log(`All ${files.length} files processed successfully`);
 
                     // Create a group if needed - but first make sure we have the latest uploadResults
                     setTimeout(async () => {
-                      if (createGroup && files.length > 1) {
+                      if (createGroup && files.length > 1 && uploadResults.length > 1) {
                         await handleCreateGroup();
                       } else {
                         setUploading(false);
                         setOverallProgress(100);
                       }
-                    }, 500);
+                    }, 300);
                   }
                 })
                 .catch(err => {
                   console.error(`Error uploading file ${nextIndex} (${nextFile.name}):`, err);
+
+                  // Release the processing lock before continuing
                   processingRef.current = false;
 
                   // Continue with next file despite error
                   if (nextIndex + 1 < files.length) {
-                    processNextFile();
+                    // Use a small timeout to prevent stack overflow and ensure state updates
+                    setTimeout(() => processNextFile(), 300);
                   } else {
                     // If this was the last file, check if we should create a group
                     setTimeout(async () => {
@@ -653,11 +712,11 @@ const FileUpload = () => {
                         setUploading(false);
                         setOverallProgress(100);
                       }
-                    }, 500);
+                    }, 300);
                   }
                 });
-            }, 500);
-          }, 500);
+            }, 300);
+          }, 300);
         } else {
           // All files processed
           console.log(`All ${files.length} files processed successfully`);
@@ -671,14 +730,14 @@ const FileUpload = () => {
               setOverallProgress(100);
             }
             processingRef.current = false;
-          }, 500);
+          }, 300);
         }
       } catch (error) {
         console.error('Error in processNextFile:', error);
         processingRef.current = false;
         setUploading(false);
       }
-    }, 1000); // Increased delay to ensure proper state updates between files
+    }, 300); // Reduced delay to improve responsiveness while still ensuring proper state updates
   };
 
   // Separate function to handle group creation
@@ -696,20 +755,58 @@ const FileUpload = () => {
         return;
       }
 
+      // Log the file IDs we're using to create the group
       console.log(`Creating group with ${fileIds.length} files:`, fileIds);
+      console.log('Upload results:', uploadResults);
 
-      // Create the group
-      const groupResult = await createFileGroup(fileIds, groupName || undefined);
-      console.log('Group created:', groupResult);
+      // Make sure we have at least 2 files to create a group
+      if (fileIds.length < 2) {
+        console.warn('Not enough files to create a group, need at least 2');
+        setError('Need at least 2 successfully uploaded files to create a group.');
+        setUploading(false);
+        return;
+      }
+
+      // Create the group with a retry mechanism
+      let retries = 0;
+      let groupResult = null;
+      const maxRetries = 2;
+
+      while (retries <= maxRetries) {
+        try {
+          // Add a small delay before creating the group to ensure all files are properly saved on the server
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+          groupResult = await createFileGroup(fileIds, groupName || undefined);
+          console.log('Group created successfully:', groupResult);
+          break; // Success, exit the retry loop
+        } catch (err) {
+          retries++;
+          console.error(`Error creating group (attempt ${retries}/${maxRetries}):`, err);
+
+          if (retries > maxRetries) {
+            throw err; // Rethrow the error after all retries fail
+          }
+
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+        }
+      }
+
+      if (!groupResult) {
+        throw new Error('Failed to create group after multiple attempts');
+      }
 
       // Store the group info
       setGroupInfo(groupResult);
+
+      // Set overall progress to 100% to indicate completion
+      setOverallProgress(100);
     } catch (error) {
       console.error('Failed to create group:', error);
       setError('Files were uploaded but failed to create group. You can still use individual file codes.');
     } finally {
       setUploading(false);
-      setOverallProgress(100);
     }
   };
 
@@ -757,6 +854,14 @@ const FileUpload = () => {
       // We need to return a Promise that resolves when the state is updated
       await new Promise(resolve => {
         setUploadResults(prev => {
+          // Make sure we don't add duplicate results
+          const isDuplicate = prev.some(item => item.code === response.data.code);
+          if (isDuplicate) {
+            console.log(`Skipping duplicate result for ${file.name}`);
+            setTimeout(() => resolve(), 0);
+            return prev;
+          }
+
           const newResults = [...prev, response.data];
           console.log(`Updated upload results: ${newResults.length} files`);
           // Use setTimeout to ensure the state update is processed before resolving
@@ -818,6 +923,7 @@ const FileUpload = () => {
     setError(null);
     setUploadResults([]);
     setCurrentFileIndex(0);
+    setGroupInfo(null); // Reset any previous group info
     processingRef.current = true;
 
     // Log the upload process
@@ -866,23 +972,24 @@ const FileUpload = () => {
         try {
           let result;
           if (useChunksForFirstFile) {
-            result = await handleChunkedUpload();
+            result = await handleChunkedUpload(firstFile, 0); // Pass explicit file reference and index
           } else {
-            result = await handleRegularUpload();
+            // Create a new FormData for this specific file
+            const formData = new FormData();
+            formData.append('file', firstFile);
+            formData.append('optimized', compressFiles ? 'true' : 'false');
+            formData.append('fileSize', firstFile.size.toString());
+
+            result = await handleDirectUpload(formData, firstFile, 0); // Use direct upload with explicit params
           }
 
           // If the upload was successful and we're in multiple files mode
           if (result && multipleFilesMode && validFiles.length > 1) {
+            // Release the processing lock before continuing to the next file
             processingRef.current = false;
 
-            // If this is the last file and we want to create a group
-            if (currentFileIndex + 1 >= validFiles.length && createGroup) {
-              // We've processed all files, now create a group
-              await handleCreateGroup();
-            } else {
-              // Process the next file
-              processNextFile();
-            }
+            // Process the next file
+            processNextFile();
           } else {
             // If we only had one file or the upload failed
             processingRef.current = false;

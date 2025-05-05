@@ -28,6 +28,8 @@ const FileDownload = () => {
     setError(null);
     setFileInfo(null);
     setGroupInfo(null);
+    setDownloadStarted({});
+    setActiveDownloads(0);
 
     try {
       // First try to get file info
@@ -77,9 +79,18 @@ const FileDownload = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      
+      // Return a promise that resolves after a short delay
+      // This helps with sequential downloads in handleDownloadAll
+      return new Promise(resolve => {
+        setTimeout(() => {
+          resolve();
+        }, 500);
+      });
     } catch (err) {
       console.error('Download error:', err);
       setError(`Failed to download ${downloadName}. Please try again.`);
+      throw err; // Rethrow to allow caller to handle the error
     } finally {
       // Reduce active downloads count
       setTimeout(() => {
@@ -93,16 +104,28 @@ const FileDownload = () => {
       setError('No files to download');
       return;
     }
-
-    // Download files one by one with a small delay to prevent browser blocking
-    for (let i = 0; i < groupInfo.files.length; i++) {
-      const file = groupInfo.files[i];
-      await handleDownload(file.id, file.filename);
-
-      // Small delay between downloads to prevent browser blocking
-      if (i < groupInfo.files.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    setActiveDownloads(groupInfo.files.length);
+    
+    try {
+      // Download files one by one with a small delay to prevent browser blocking
+      for (let i = 0; i < groupInfo.files.length; i++) {
+        const file = groupInfo.files[i];
+        await handleDownload(file.id, file.filename);
+        
+        // Small delay between downloads to prevent browser blocking
+        if (i < groupInfo.files.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
+    } catch (err) {
+      console.error('Error downloading all files:', err);
+      setError('Failed to download all files. Please try again.');
+    } finally {
+      // Ensure active downloads is reset properly
+      setTimeout(() => {
+        setActiveDownloads(0);
+      }, 2000);
     }
   };
 
