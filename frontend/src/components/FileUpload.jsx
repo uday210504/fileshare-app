@@ -227,21 +227,32 @@ const FileUpload = () => {
       console.log(`Upload successful for ${currentFile.name}:`, response.data);
 
       // Add to results array - use a callback to ensure we're working with the latest state
-      setUploadResults(prev => {
-        // Check if this file is already in the results (by uniqueIdentifier if available, or by code)
-        const isDuplicate = prev.some(item =>
-          (response.data.uniqueIdentifier && item.uniqueIdentifier === response.data.uniqueIdentifier) ||
-          item.code === response.data.code
-        );
+      // Store original filename with the result to ensure proper display
+      await new Promise(resolve => {
+        setUploadResults(prev => {
+          // Check if this file is already in the results (by uniqueIdentifier if available, or by code)
+          const isDuplicate = prev.some(item =>
+            (response.data.uniqueIdentifier && item.uniqueIdentifier === response.data.uniqueIdentifier) ||
+            item.code === response.data.code
+          );
 
-        if (isDuplicate) {
-          console.log(`Skipping duplicate result for ${currentFile.name}`);
-          return prev;
-        }
+          if (isDuplicate) {
+            console.log(`Skipping duplicate result for ${currentFile.name}`);
+            setTimeout(() => resolve(), 0);
+            return prev;
+          }
 
-        const newResults = [...prev, response.data];
-        console.log(`Updated upload results: ${newResults.length} files`);
-        return newResults;
+          // Enhance the result with the original filename for reliable display
+          const enhancedResult = {
+            ...response.data,
+            originalFilename: currentFile.name  // Store the original filename for reliable display
+          };
+          
+          const newResults = [...prev, enhancedResult];
+          console.log(`Updated upload results: ${newResults.length} files`);
+          setTimeout(() => resolve(), 0);
+          return newResults;
+        });
       });
 
       // Update progress to 100% for this file
@@ -476,16 +487,16 @@ const FileUpload = () => {
 
         // Check if the response is valid
         if (!response || !response.data) {
+          console.error('Invalid response from server after uploading all chunks');
           throw new Error('Invalid response from server');
         }
 
         console.log(`Chunked upload successful for ${currentFile.name}:`, response.data);
 
         // Add to results array - use a callback to ensure we're working with the latest state
-        // We need to return a Promise that resolves when the state is updated
         await new Promise(resolve => {
           setUploadResults(prev => {
-            // Make sure we don't add duplicate results - check by uniqueIdentifier if available
+            // Check if this file is already in the results
             const isDuplicate = prev.some(item =>
               (response.data.uniqueIdentifier && item.uniqueIdentifier === response.data.uniqueIdentifier) ||
               item.code === response.data.code
@@ -497,9 +508,14 @@ const FileUpload = () => {
               return prev;
             }
 
-            const newResults = [...prev, response.data];
+            // Enhance the result with the original filename for reliable display
+            const enhancedResult = {
+              ...response.data,
+              originalFilename: currentFile.name  // Store the original filename for reliable display
+            };
+            
+            const newResults = [...prev, enhancedResult];
             console.log(`Updated upload results: ${newResults.length} files`);
-            // Use setTimeout to ensure the state update is processed before resolving
             setTimeout(() => resolve(), 0);
             return newResults;
           });
@@ -661,9 +677,10 @@ const FileUpload = () => {
               let uploadPromise;
 
               try {
+                // Pass the file reference directly to avoid state closure issues
                 uploadPromise = useChunks
                   ? handleChunkedUpload(nextFile, nextIndex)
-                  : handleDirectUpload(formData, nextFile, nextIndex);
+                  : handleRegularUpload(nextFile, nextIndex);
 
                 if (!uploadPromise || typeof uploadPromise.then !== 'function') {
                   throw new Error('Upload method did not return a valid promise');
@@ -825,103 +842,6 @@ const FileUpload = () => {
     }
   };
 
-  // Direct upload function that doesn't rely on component state
-  const handleDirectUpload = async (formData, file, fileIndex) => {
-    try {
-      // Create abort controller for cancellation if not already created
-      if (!abortControllerRef.current) {
-        abortControllerRef.current = new AbortController();
-      }
-      const signal = abortControllerRef.current.signal;
-
-      console.log(`Starting direct upload for file: ${file.name}, size: ${formatFileSize(file.size)}, compression: ${compressFiles ? 'enabled' : 'disabled'}`);
-
-      // Important: Do NOT set Content-Type header for multipart/form-data
-      const response = await api.post('/api/upload', formData, {
-        signal,
-        onUploadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            setUploadProgress(percentCompleted);
-
-            // Update overall progress
-            const overallPercent = calculateOverallProgress(
-              fileIndex,
-              files.length,
-              percentCompleted
-            );
-            setOverallProgress(Math.min(Math.round(overallPercent), 99));
-          } else {
-            setUploadProgress(50); // Show some progress
-          }
-        },
-        timeout: 5 * 60 * 1000, // 5 minutes timeout
-      });
-
-      // Check if the response is valid
-      if (!response || !response.data) {
-        throw new Error('Invalid response from server');
-      }
-
-      console.log(`Upload successful for ${file.name}:`, response.data);
-
-      // Add to results array - use a callback to ensure we're working with the latest state
-      // We need to return a Promise that resolves when the state is updated
-      await new Promise(resolve => {
-        setUploadResults(prev => {
-          // Make sure we don't add duplicate results - check by uniqueIdentifier if available
-          const isDuplicate = prev.some(item =>
-            (response.data.uniqueIdentifier && item.uniqueIdentifier === response.data.uniqueIdentifier) ||
-            item.code === response.data.code
-          );
-
-          if (isDuplicate) {
-            console.log(`Skipping duplicate result for ${file.name}`);
-            setTimeout(() => resolve(), 0);
-            return prev;
-          }
-
-          const newResults = [...prev, response.data];
-          console.log(`Updated upload results: ${newResults.length} files`);
-          // Use setTimeout to ensure the state update is processed before resolving
-          setTimeout(() => resolve(), 0);
-          return newResults;
-        });
-      });
-
-      // Update progress to 100% for this file
-      setUploadProgress(100);
-
-      // Return the response data to indicate success
-      return response.data;
-    } catch (err) {
-      if (abortControllerRef.current?.signal.aborted) {
-        setError('Upload was cancelled');
-        return null;
-      }
-
-      console.error(`Upload error for ${file.name}:`, err);
-
-      // More detailed error message
-      let errorMessage = 'Failed to upload file. Please try again.';
-
-      if (err.message) {
-        errorMessage = err.message;
-      } else if (err.response?.data?.error) {
-        errorMessage = err.response.data.error;
-      }
-
-      // Add file info to error for better debugging
-      console.error(`Error uploading file: ${file.name}, size: ${formatFileSize(file.size)}`);
-
-      // Set the error message but don't clear it immediately
-      setError(errorMessage);
-
-      // Return null to indicate failure
-      return null;
-    }
-  }
-
   // Main upload handler
   const handleUpload = async () => {
     // If already processing, don't start a new upload
@@ -993,13 +913,8 @@ const FileUpload = () => {
           if (useChunksForFirstFile) {
             result = await handleChunkedUpload(firstFile, 0); // Pass explicit file reference and index
           } else {
-            // Create a new FormData for this specific file
-            const formData = new FormData();
-            formData.append('file', firstFile);
-            formData.append('optimized', compressFiles ? 'true' : 'false');
-            formData.append('fileSize', firstFile.size.toString());
-
-            result = await handleDirectUpload(formData, firstFile, 0); // Use direct upload with explicit params
+            // Pass the file directly rather than creating a FormData here
+            result = await handleRegularUpload(firstFile, 0); // Use regular upload with explicit file reference
           }
 
           // If the upload was successful and we're in multiple files mode
@@ -1347,69 +1262,26 @@ const FileUpload = () => {
             // Multiple files success view (individual codes)
             <>
               <h2>Files Uploaded Successfully!</h2>
-              <p><strong>{(() => {
-                // Count unique files by using a Set of unique identifiers or filenames
-                const uniqueFiles = new Set();
-                uploadResults.forEach(result => {
-                  if (result.uniqueIdentifier) {
-                    uniqueFiles.add(result.uniqueIdentifier);
-                  } else {
-                    uniqueFiles.add(result.filename + result.code); // Fallback to filename+code
-                  }
-                });
-                return uniqueFiles.size;
-              })()} files</strong> have been uploaded.</p>
+              <p><strong>{uploadResults.length} files</strong> have been uploaded.</p>
 
-              {/* Handle duplicate filenames with improved numbering */}
               <div className="files-codes-list">
-                {(() => {
-                  // First, count occurrences of each filename
-                  const filenameCount = {};
-                  uploadResults.forEach(result => {
-                    filenameCount[result.filename] = (filenameCount[result.filename] || 0) + 1;
-                  });
-
-                  // Then, track how many times we've seen each filename
-                  const filenameSeen = {};
-
-                  // Create a map of unique identifiers to ensure we don't have duplicates
-                  const uniqueIds = new Set();
-                  uploadResults.forEach(result => {
-                    if (result.uniqueIdentifier) {
-                      uniqueIds.add(result.uniqueIdentifier);
-                    }
-                  });
-
-                  // Map with proper display names
-                  return uploadResults.map((result, index) => {
-                    // Initialize counter for this filename if not exists
-                    if (!filenameSeen[result.filename]) {
-                      filenameSeen[result.filename] = 0;
-                    }
-
-                    // Increment counter
-                    filenameSeen[result.filename]++;
-
-                    // If this filename appears multiple times, add a number suffix
-                    const isDuplicate = filenameCount[result.filename] > 1;
-                    const displayName = isDuplicate
-                      ? `${result.filename} (${filenameSeen[result.filename]})`
-                      : result.filename;
-
-                    return (
-                      <div key={index} className="file-code-item">
-                        <div className="file-code-name">{displayName}</div>
-                        <div className="file-code-value">{result.code}</div>
-                        <button className="copy-code-button" onClick={() => {
-                          navigator.clipboard.writeText(result.code);
-                          alert(`Code for ${displayName} copied to clipboard!`);
-                        }}>
-                          Copy
-                        </button>
-                      </div>
-                    );
-                  });
-                })()}
+                {uploadResults.map((result, index) => {
+                  // Use the original filename if available, otherwise fall back to result.filename
+                  const displayName = result.originalFilename || result.filename;
+                  
+                  return (
+                    <div key={`${result.code}-${index}`} className="file-code-item">
+                      <div className="file-code-name">{displayName}</div>
+                      <div className="file-code-value">{result.code}</div>
+                      <button className="copy-code-button" onClick={() => {
+                        navigator.clipboard.writeText(result.code);
+                        alert(`Code for ${displayName} copied to clipboard!`);
+                      }}>
+                        Copy
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
               <div className="success-actions">
                 <button className="new-upload-button" onClick={handleReset}>
