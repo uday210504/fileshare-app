@@ -5,9 +5,11 @@ import './FileDownload.css';
 const FileDownload = () => {
   const [code, setCode] = useState('');
   const [fileInfo, setFileInfo] = useState(null);
+  const [groupInfo, setGroupInfo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [downloadStarted, setDownloadStarted] = useState(false);
+  const [downloadStarted, setDownloadStarted] = useState({});
+  const [activeDownloads, setActiveDownloads] = useState(0);
 
   const handleCodeChange = (e) => {
     setCode(e.target.value.trim());
@@ -25,33 +27,82 @@ const FileDownload = () => {
     setLoading(true);
     setError(null);
     setFileInfo(null);
+    setGroupInfo(null);
 
     try {
-      const response = await api.get(`/api/download/${code}`);
-      setFileInfo(response.data);
+      // First try to get file info
+      try {
+        const response = await api.get(`/api/download/${code}`);
+        setFileInfo(response.data);
+        setGroupInfo(null);
+      } catch (fileErr) {
+        // If it's not a file, check if it's a group
+        if (fileErr.response?.data?.isGroup) {
+          // It's a group, get group info
+          try {
+            const groupResponse = await api.get(`/api/group/${code}`);
+            setGroupInfo(groupResponse.data);
+            setFileInfo(null);
+          } catch (groupErr) {
+            throw groupErr;
+          }
+        } else {
+          // It's neither a valid file nor a group
+          throw fileErr;
+        }
+      }
     } catch (err) {
-      console.error('Error checking file:', err);
-      setError(err.response?.data?.error || 'Failed to find file. Please check the code and try again.');
+      console.error('Error checking code:', err);
+      setError(err.response?.data?.error || 'Failed to find file or group. Please check the code and try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDownload = async () => {
-    setDownloadStarted(true);
+  const handleDownload = async (fileId, fileName) => {
+    // Use the provided fileId or the current code
+    const downloadId = fileId || code;
+    const downloadName = fileName || (fileInfo ? fileInfo.filename : 'file');
+
+    // Mark this file as downloading
+    setDownloadStarted(prev => ({ ...prev, [downloadId]: true }));
+    setActiveDownloads(prev => prev + 1);
 
     try {
       // Create a link to download the file
       const link = document.createElement('a');
       const apiUrl = import.meta.env.VITE_API_URL || '';
-      link.href = `${apiUrl}/api/file/${code}`;
-      link.setAttribute('download', fileInfo.filename);
+      link.href = `${apiUrl}/api/file/${downloadId}`;
+      link.setAttribute('download', downloadName);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
     } catch (err) {
       console.error('Download error:', err);
-      setError('Failed to download file. Please try again.');
+      setError(`Failed to download ${downloadName}. Please try again.`);
+    } finally {
+      // Reduce active downloads count
+      setTimeout(() => {
+        setActiveDownloads(prev => Math.max(0, prev - 1));
+      }, 1000);
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    if (!groupInfo || !groupInfo.files || groupInfo.files.length === 0) {
+      setError('No files to download');
+      return;
+    }
+
+    // Download files one by one with a small delay to prevent browser blocking
+    for (let i = 0; i < groupInfo.files.length; i++) {
+      const file = groupInfo.files[i];
+      await handleDownload(file.id, file.filename);
+
+      // Small delay between downloads to prevent browser blocking
+      if (i < groupInfo.files.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
   };
 
@@ -71,16 +122,21 @@ const FileDownload = () => {
   const handleReset = () => {
     setCode('');
     setFileInfo(null);
+    setGroupInfo(null);
     setError(null);
-    setDownloadStarted(false);
+    setDownloadStarted({});
+    setActiveDownloads(0);
   };
+
+  // Determine if we're showing the input form or a result
+  const showInputForm = !fileInfo && !groupInfo;
 
   return (
     <div className="file-download">
-      {!fileInfo ? (
+      {showInputForm ? (
         <form onSubmit={handleCheckFile} className="download-form">
-          <h2>Download a File</h2>
-          <p className="form-description">Enter the file code you received to download the file.</p>
+          <h2>Download Files</h2>
+          <p className="form-description">Enter the file code or group code you received to download the file(s).</p>
 
           <div className="input-group">
             <label htmlFor="file-code">File Code</label>
@@ -89,7 +145,7 @@ const FileDownload = () => {
               id="file-code"
               value={code}
               onChange={handleCodeChange}
-              placeholder="Enter file code (e.g., ABC123)"
+              placeholder="Enter code (e.g., ABC123)"
               className="code-input"
             />
           </div>
@@ -99,7 +155,7 @@ const FileDownload = () => {
             className="check-button"
             disabled={loading}
           >
-            {loading ? 'Checking...' : 'Check File'}
+            {loading ? 'Checking...' : 'Check Code'}
           </button>
 
           {error && (
@@ -108,7 +164,8 @@ const FileDownload = () => {
             </div>
           )}
         </form>
-      ) : (
+      ) : fileInfo ? (
+        // Single file view
         <div className="file-info-card">
           <div className="file-icon">📄</div>
           <h2>File Found!</h2>
@@ -152,17 +209,81 @@ const FileDownload = () => {
           <div className="download-actions">
             <button
               className="download-button"
-              onClick={handleDownload}
-              disabled={downloadStarted}
+              onClick={() => handleDownload()}
+              disabled={downloadStarted[code]}
             >
-              {downloadStarted ? 'Downloading...' : 'Download File'}
+              {downloadStarted[code] ? 'Downloading...' : 'Download File'}
             </button>
             <button className="back-button" onClick={handleReset}>
               Back to Search
             </button>
           </div>
         </div>
-      )}
+      ) : groupInfo ? (
+        // Group view
+        <div className="file-info-card group-info-card">
+          <div className="file-icon">📦</div>
+          <h2>File Group Found!</h2>
+
+          <div className="file-details">
+            <div className="detail-row">
+              <span className="detail-label">Group Name:</span>
+              <span className="detail-value">{groupInfo.name}</span>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">Files:</span>
+              <span className="detail-value">{groupInfo.fileCount} files</span>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">Created:</span>
+              <span className="detail-value">{formatDate(groupInfo.createdAt)}</span>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">Group Code:</span>
+              <span className="detail-value file-code">{code}</span>
+            </div>
+          </div>
+
+          {/* List of files in the group */}
+          <div className="group-files-list">
+            <h3>Files in this group:</h3>
+            {groupInfo.files && groupInfo.files.length > 0 ? (
+              <ul className="files-list">
+                {groupInfo.files.map((file, index) => (
+                  <li key={file.id} className="file-item">
+                    <div className="file-item-info">
+                      <span className="file-item-name">{file.filename}</span>
+                      <span className="file-item-size">{formatFileSize(file.size)}</span>
+                    </div>
+                    <button
+                      className="file-download-button"
+                      onClick={() => handleDownload(file.id, file.filename)}
+                      disabled={downloadStarted[file.id]}
+                    >
+                      {downloadStarted[file.id] ? 'Downloading...' : 'Download'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="no-files-message">No files found in this group.</p>
+            )}
+          </div>
+
+          <div className="download-actions">
+            <button
+              className="download-button"
+              onClick={handleDownloadAll}
+              disabled={activeDownloads > 0 || !groupInfo.files || groupInfo.files.length === 0}
+            >
+              {activeDownloads > 0 ? `Downloading (${activeDownloads}/${groupInfo.files.length})...` : 'Download All Files'}
+            </button>
+            <button className="back-button" onClick={handleReset}>
+              Back to Search
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };
