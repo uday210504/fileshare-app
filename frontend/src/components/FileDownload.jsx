@@ -79,7 +79,7 @@ const FileDownload = () => {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
+
       // Return a promise that resolves after a short delay
       // This helps with sequential downloads in handleDownloadAll
       return new Promise(resolve => {
@@ -104,15 +104,15 @@ const FileDownload = () => {
       setError('No files to download');
       return;
     }
-    
+
     setActiveDownloads(groupInfo.files.length);
-    
+
     try {
       // Download files one by one with a small delay to prevent browser blocking
       for (let i = 0; i < groupInfo.files.length; i++) {
         const file = groupInfo.files[i];
         await handleDownload(file.id, file.filename);
-        
+
         // Small delay between downloads to prevent browser blocking
         if (i < groupInfo.files.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 1000));
@@ -275,7 +275,9 @@ const FileDownload = () => {
                 {groupInfo.files.map((file, index) => (
                   <li key={file.id} className="file-item">
                     <div className="file-item-info">
-                      <span className="file-item-name">{file.filename}</span>
+                      <span className="file-item-name">
+                        {file.displayFilename || file.filename}
+                      </span>
                       <span className="file-item-size">{formatFileSize(file.size)}</span>
                     </div>
                     <button

@@ -1296,7 +1296,9 @@ const FileUpload = () => {
                 <div className="files-list-compact">
                   {groupInfo.files.map((file, index) => (
                     <div key={index} className="group-file-item">
-                      <span className="group-file-name">{file.filename}</span>
+                      <span className="group-file-name">
+                        {file.displayFilename || file.filename}
+                      </span>
                       <span className="group-file-size">{formatFileSize(file.size)}</span>
                     </div>
                   ))}
@@ -1328,30 +1330,56 @@ const FileUpload = () => {
               <h2>Files Uploaded Successfully!</h2>
               <p><strong>{uploadResults.length} files</strong> have been uploaded.</p>
 
-              {/* Check for duplicate filenames and add index if needed */}
+              {/* Handle duplicate filenames with improved numbering */}
               <div className="files-codes-list">
-                {uploadResults.map((result, index) => {
-                  // Check if this filename appears multiple times
-                  const isDuplicate = uploadResults.filter(r => r.filename === result.filename).length > 1;
+                {(() => {
+                  // First, count occurrences of each filename
+                  const filenameCount = {};
+                  uploadResults.forEach(result => {
+                    filenameCount[result.filename] = (filenameCount[result.filename] || 0) + 1;
+                  });
 
-                  // If duplicate, add the index to make it clear which is which
-                  const displayName = isDuplicate
-                    ? `${result.filename} (${index + 1})`
-                    : result.filename;
+                  // Then, track how many times we've seen each filename
+                  const filenameSeen = {};
 
-                  return (
-                    <div key={index} className="file-code-item">
-                      <div className="file-code-name">{displayName}</div>
-                      <div className="file-code-value">{result.code}</div>
-                      <button className="copy-code-button" onClick={() => {
-                        navigator.clipboard.writeText(result.code);
-                        alert(`Code for ${displayName} copied to clipboard!`);
-                      }}>
-                        Copy
-                      </button>
-                    </div>
-                  );
-                })}
+                  // Create a map of unique identifiers to ensure we don't have duplicates
+                  const uniqueIds = new Set();
+                  uploadResults.forEach(result => {
+                    if (result.uniqueIdentifier) {
+                      uniqueIds.add(result.uniqueIdentifier);
+                    }
+                  });
+
+                  // Map with proper display names
+                  return uploadResults.map((result, index) => {
+                    // Initialize counter for this filename if not exists
+                    if (!filenameSeen[result.filename]) {
+                      filenameSeen[result.filename] = 0;
+                    }
+
+                    // Increment counter
+                    filenameSeen[result.filename]++;
+
+                    // If this filename appears multiple times, add a number suffix
+                    const isDuplicate = filenameCount[result.filename] > 1;
+                    const displayName = isDuplicate
+                      ? `${result.filename} (${filenameSeen[result.filename]})`
+                      : result.filename;
+
+                    return (
+                      <div key={index} className="file-code-item">
+                        <div className="file-code-name">{displayName}</div>
+                        <div className="file-code-value">{result.code}</div>
+                        <button className="copy-code-button" onClick={() => {
+                          navigator.clipboard.writeText(result.code);
+                          alert(`Code for ${displayName} copied to clipboard!`);
+                        }}>
+                          Copy
+                        </button>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
               <div className="success-actions">
                 <button className="new-upload-button" onClick={handleReset}>
