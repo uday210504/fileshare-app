@@ -785,3 +785,17 @@
     background: rgba(0, 0, 0, 0.05);
   }
 }
+
+.group-toggle {
+  background-color: rgba(73, 83, 219, 0.1);
+  border-radius: 6px;
+  padding: 5px 10px;
+  margin-top: 5px;
+  margin-bottom: 5px;
+  border: 1px dashed rgba(73, 83, 219, 0.3);
+}
+
+.toggle-text.highlight {
+  font-weight: bold;
+  color: #4953db;
+}

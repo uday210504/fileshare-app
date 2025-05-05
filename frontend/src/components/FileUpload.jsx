@@ -536,13 +536,14 @@ const FileUpload = () => {
                   
                   // Create group if needed
                   setTimeout(() => {
-                    if (createGroup && files.length > 1 && uploadResults.length > 1) {
+                    // Ensure we have the latest upload results
+                    if (createGroup && multipleFilesMode && files.length > 1 && uploadResults.length > 1) {
                       handleCreateGroup();
                     } else {
                       setUploading(false);
                       setOverallProgress(100);
                     }
-                  }, 300);
+                  }, 500); // Increased from 300 to 500ms for reliability
                 }
               })
               .catch(err => {
@@ -555,13 +556,13 @@ const FileUpload = () => {
                 } else {
                   // Check for group creation
                   setTimeout(() => {
-                    if (createGroup && files.length > 1 && uploadResults.length > 1) {
+                    if (createGroup && multipleFilesMode && files.length > 1 && uploadResults.length > 1) {
                       handleCreateGroup();
                     } else {
                       setUploading(false);
                       setOverallProgress(100);
                     }
-                  }, 300);
+                  }, 500); // Increased for reliability
                 }
               });
           }, 300);
@@ -571,14 +572,14 @@ const FileUpload = () => {
           
           // Create group if needed
           setTimeout(() => {
-            if (createGroup && files.length > 1 && uploadResults.length > 1) {
+            if (createGroup && multipleFilesMode && files.length > 1 && uploadResults.length > 1) {
               handleCreateGroup();
             } else {
               setUploading(false);
               setOverallProgress(100);
             }
             processingRef.current = false;
-          }, 300);
+          }, 500); // Increased for reliability
         }
       } catch (error) {
         console.error('Error in processNextFile:', error);
@@ -611,6 +612,8 @@ const FileUpload = () => {
     processingRef.current = true;
 
     console.log(`Starting upload of ${files.length} files`);
+    console.log(`Group creation is ${createGroup ? 'enabled' : 'disabled'}`);
+    console.log(`Multiple files mode is ${multipleFilesMode ? 'enabled' : 'disabled'}`);
 
     // Filter out invalid files
     const validFiles = files.filter(file => file && file.size > 0);
@@ -685,8 +688,9 @@ const FileUpload = () => {
     console.log('Creating file group...');
 
     try {
-      // Get all file IDs from the upload results
-      const fileIds = uploadResults.map(result => result.code);
+      // Get all file IDs from the upload results - ensure we're working with the most current data
+      const currentUploadResults = [...uploadResults];
+      const fileIds = currentUploadResults.map(result => result.code);
 
       if (fileIds.length === 0) {
         console.error('No file IDs available to create group');
@@ -697,7 +701,7 @@ const FileUpload = () => {
 
       // Log the file IDs we're using to create the group
       console.log(`Creating group with ${fileIds.length} files:`, fileIds);
-      console.log('Upload results:', uploadResults);
+      console.log('Upload results:', currentUploadResults);
 
       // Make sure we have at least 2 files to create a group
       if (fileIds.length < 2) {
@@ -710,12 +714,12 @@ const FileUpload = () => {
       // Create the group with a retry mechanism
       let retries = 0;
       let groupResult = null;
-      const maxRetries = 2;
+      const maxRetries = 3; // Increased from 2 to 3 for better reliability
 
       while (retries <= maxRetries) {
         try {
           // Add a small delay before creating the group to ensure all files are properly saved on the server
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 800)); // Increased from 500 to 800ms
 
           groupResult = await createFileGroup(fileIds, groupName || undefined);
           console.log('Group created successfully:', groupResult);
@@ -728,8 +732,8 @@ const FileUpload = () => {
             throw err; // Rethrow the error after all retries fail
           }
 
-          // Wait before retrying
-          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+          // Wait before retrying - longer wait for each retry
+          await new Promise(resolve => setTimeout(resolve, 1500 * retries));
         }
       }
 
@@ -791,8 +795,10 @@ const FileUpload = () => {
                   onChange={() => {
                     setMultipleFilesMode(!multipleFilesMode);
                     // If turning off multiple files mode, also turn off group creation
-                    if (!multipleFilesMode === false) {
+                    if (multipleFilesMode) {
                       setCreateGroup(false);
+                    } else {
+                      setCreateGroup(true); // Re-enable group creation when multiple files mode is turned on
                     }
                   }}
                   disabled={uploading}
@@ -802,7 +808,7 @@ const FileUpload = () => {
             </div>
 
             {multipleFilesMode && (
-              <div className="option-toggle">
+              <div className="option-toggle group-toggle">
                 <label className="toggle-label">
                   <input
                     type="checkbox"
@@ -810,7 +816,7 @@ const FileUpload = () => {
                     onChange={() => setCreateGroup(!createGroup)}
                     disabled={uploading}
                   />
-                  <span className="toggle-text">Create Group</span>
+                  <span className="toggle-text highlight">Create Group</span>
                   {createGroup && <span className="toggle-info">📦 All files share one code</span>}
                 </label>
               </div>
