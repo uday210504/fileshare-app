@@ -450,10 +450,15 @@ const FileUpload = () => {
         console.log(`Chunked upload successful for ${currentFile.name}:`, response.data);
 
         // Add to results array - use a callback to ensure we're working with the latest state
-        setUploadResults(prev => {
-          const newResults = [...prev, response.data];
-          console.log(`Updated upload results: ${newResults.length} files`);
-          return newResults;
+        // We need to return a Promise that resolves when the state is updated
+        await new Promise(resolve => {
+          setUploadResults(prev => {
+            const newResults = [...prev, response.data];
+            console.log(`Updated upload results: ${newResults.length} files`);
+            // Use setTimeout to ensure the state update is processed before resolving
+            setTimeout(() => resolve(), 0);
+            return newResults;
+          });
         });
 
         // Update progress to 100% for this file
@@ -749,10 +754,15 @@ const FileUpload = () => {
       console.log(`Upload successful for ${file.name}:`, response.data);
 
       // Add to results array - use a callback to ensure we're working with the latest state
-      setUploadResults(prev => {
-        const newResults = [...prev, response.data];
-        console.log(`Updated upload results: ${newResults.length} files`);
-        return newResults;
+      // We need to return a Promise that resolves when the state is updated
+      await new Promise(resolve => {
+        setUploadResults(prev => {
+          const newResults = [...prev, response.data];
+          console.log(`Updated upload results: ${newResults.length} files`);
+          // Use setTimeout to ensure the state update is processed before resolving
+          setTimeout(() => resolve(), 0);
+          return newResults;
+        });
       });
 
       // Update progress to 100% for this file
